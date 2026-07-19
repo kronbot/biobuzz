@@ -1,11 +1,21 @@
 package org.firstinspires.ftc.teamcode.opmodes.teleop;
 
+import static org.firstinspires.ftc.teamcode.utils.Constants.*;
+
+import androidx.annotation.NonNull;
+
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
+import org.firstinspires.ftc.teamcode.utils.Constants.*;
+
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
+import org.firstinspires.ftc.teamcode.subsystems.Flap;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
+import org.firstinspires.ftc.teamcode.subsystems.Loader;
+import org.firstinspires.ftc.teamcode.subsystems.Outtake;
 
 import dev.nextftc.bindings.Range;
+import dev.nextftc.core.commands.Command;
 import dev.nextftc.core.components.BindingsComponent;
 import dev.nextftc.core.components.SubsystemComponent;
 import dev.nextftc.extensions.pedro.PedroComponent;
@@ -19,7 +29,12 @@ import dev.nextftc.hardware.driving.DriverControlledCommand;
 public class MainTeleOp extends NextFTCOpMode {
     public MainTeleOp() {
         addComponents(
-                new SubsystemComponent(Intake.INSTANCE),
+                new SubsystemComponent(
+                        Outtake.INSTANCE,
+                        Intake.INSTANCE,
+                        Loader.INSTANCE,
+                        Flap.INSTANCE
+                ),
                 new PedroComponent(Constants::createFollower),
                 BulkReadComponent.INSTANCE,
                 BindingsComponent.INSTANCE
@@ -36,12 +51,37 @@ public class MainTeleOp extends NextFTCOpMode {
         );
         driverControlled.schedule();
 
-        Range rightStickY = Gamepads.gamepad2().rightStickY().deadZone(0.1);
+        double driverLoaderSpeed =
+                Gamepads.gamepad1().rightTrigger().deadZone(0.1).get() -
+                Gamepads.gamepad1().leftTrigger().deadZone(0.1).get();
+        double utilityLoaderSpeed =
+                Gamepads.gamepad2().rightStickY().deadZone(0.1).get();
 
-        rightStickY.asButton(value -> value != 0)
-                .whenTrue(() -> Intake.INSTANCE.activate(rightStickY.get()).invoke())
-                .whenBecomesFalse(() -> Intake.INSTANCE.deactivate().invoke());
+        Gamepads.gamepad1().rightBumper()
+                .whenFalse(() -> Flap.INSTANCE.close()
+                        .and(Loader.INSTANCE.activate(utilityLoaderSpeed))
+                        .and(Intake.INSTANCE.activate(utilityLoaderSpeed))
+                        .invoke())
+                .whenTrue(() -> Flap.INSTANCE.open()
+                        .and(Loader.INSTANCE.activate(driverLoaderSpeed))
+                        .and(Intake.INSTANCE.activate(driverLoaderSpeed / 2))
+                        .invoke()
+                );
 
+        Gamepads.gamepad1().triangle().whenBecomesTrue(
+                () -> Outtake.INSTANCE.setGoalVelocity(RANGE_1_VELOCITY)
+                        .then(new Command() {
+                            @Override
+                            public void start() {
+                                gamepad1.rumble(1, 1, 100);
+                            }
+                            @Override
+                            public boolean isDone() {
+                                return !gamepad1.isRumbling();
+                            }
+                        }.requires(gamepad1))
+                        .invoke()
+        );
     }
 
 }
