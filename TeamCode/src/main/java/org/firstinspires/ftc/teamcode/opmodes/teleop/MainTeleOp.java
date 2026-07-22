@@ -17,8 +17,8 @@ import org.firstinspires.ftc.teamcode.subsystems.Outtake;
 import java.util.function.DoubleSupplier;
 
 import dev.nextftc.bindings.Range;
-import dev.nextftc.bindings.Variable;
 import dev.nextftc.core.commands.Command;
+import dev.nextftc.core.commands.conditionals.IfElseCommand;
 import dev.nextftc.core.components.BindingsComponent;
 import dev.nextftc.core.components.SubsystemComponent;
 import dev.nextftc.extensions.pedro.PedroComponent;
@@ -48,6 +48,20 @@ public class MainTeleOp extends NextFTCOpMode {
     private final Range leftTrigger  = Gamepads.gamepad1().leftTrigger().deadZone(0.1);
     private final Range utilityStickY = Gamepads.gamepad2().rightStickY().deadZone(0.1);
 
+    @NonNull
+    private Command gamepadRumble(double rumble1, double rumble2, int duration) {
+        return new Command() {
+            @Override
+            public void start() {
+                gamepad1.rumble(rumble1, rumble2, duration);
+            }
+            @Override
+            public boolean isDone() {
+                return !gamepad1.isRumbling();
+            }
+        }.requires(gamepad1);
+    }
+
     @Override
     public void onStartButtonPressed() {
         BindingsComponent.INSTANCE.preWaitForStart();
@@ -63,89 +77,46 @@ public class MainTeleOp extends NextFTCOpMode {
         DoubleSupplier utilityLoaderSpeed = utilityStickY::get;
 
         Gamepads.gamepad1().rightBumper()
-                .whenFalse(() -> Flap.INSTANCE.close()
-                        .and(Loader.INSTANCE.activate(utilityLoaderSpeed.getAsDouble()))
+                .whenBecomesFalse(() -> Flap.INSTANCE.close().invoke())
+                .whenFalse(() -> Loader.INSTANCE.activate(utilityLoaderSpeed.getAsDouble())
                         .and(Intake.INSTANCE.activate(utilityLoaderSpeed.getAsDouble()))
                         .invoke())
-                .whenTrue(() -> Flap.INSTANCE.open()
-                        .and(Loader.INSTANCE.activate(driverLoaderSpeed.getAsDouble()))
+                .whenBecomesTrue(() -> Flap.INSTANCE.open().invoke())
+                .whenTrue(() -> Loader.INSTANCE.activate(driverLoaderSpeed.getAsDouble())
                         .and(Intake.INSTANCE.activate(driverLoaderSpeed.getAsDouble() / 2))
-                        .invoke()
-                );
+                        .invoke());
 
         Gamepads.gamepad1().triangle().whenBecomesTrue(
                 () -> Outtake.INSTANCE.setGoalVelocity(RANGE_1_VELOCITY)
-                        .then(new Command() {
-                            @Override
-                            public void start() {
-                                gamepad1.rumble(1, 1, 100);
-                            }
-                            @Override
-                            public boolean isDone() {
-                                return !gamepad1.isRumbling();
-                            }
-                        }.requires(gamepad1))
+                        .then(gamepadRumble(0, 1, 100))
                         .invoke()
         );
 
         Gamepads.gamepad1().square().whenBecomesTrue(
                 () -> Outtake.INSTANCE.setGoalVelocity(RANGE_2_VELOCITY)
-                        .then(new Command() {
-                            @Override
-                            public void start() {
-                                gamepad1.rumble(1, 1, 100);
-                            }
-                            @Override
-                            public boolean isDone() {
-                                return !gamepad1.isRumbling();
-                            }
-                        }.requires(gamepad1))
+                        .then(gamepadRumble(0, 1, 100))
                         .invoke()
         );
 
         Gamepads.gamepad1().cross().whenBecomesTrue(
                 () -> Outtake.INSTANCE.setGoalVelocity(RANGE_3_VELOCITY)
-                        .then(new Command() {
-                            @Override
-                            public void start() {
-                                gamepad1.rumble(1, 1, 100);
-                            }
-                            @Override
-                            public boolean isDone() {
-                                return !gamepad1.isRumbling();
-                            }
-                        }.requires(gamepad1))
+                        .then(gamepadRumble(0, 1, 100))
                         .invoke()
         );
 
         Gamepads.gamepad1().circle().whenBecomesTrue(
                 () -> Outtake.INSTANCE.setGoalVelocity(RANGE_4_VELOCITY)
-                        .then(new Command() {
-                            @Override
-                            public void start() {
-                                gamepad1.rumble(1, 1, 100);
-                            }
-                            @Override
-                            public boolean isDone() {
-                                return !gamepad1.isRumbling();
-                            }
-                        }.requires(gamepad1))
+                        .then(gamepadRumble(0, 1, 100))
                         .invoke()
         );
 
         Gamepads.gamepad1().leftBumper().whenBecomesTrue(
-                () -> Outtake.INSTANCE.setGoalVelocity(0)
-                        .then(new Command() {
-                            @Override
-                            public void start() {
-                                gamepad1.rumble(1, 1, 100);
-                            }
-                            @Override
-                            public boolean isDone() {
-                                return !gamepad1.isRumbling();
-                            }
-                        }.requires(gamepad1))
-                        .invoke()
+                new IfElseCommand(
+                        Outtake.INSTANCE::isSpinning,
+                        Outtake.INSTANCE.setGoalVelocity(0)
+                                .then(gamepadRumble(1, 0, 100)),
+                        gamepadRumble(1, 1, 50)
+                )
         );
     }
 

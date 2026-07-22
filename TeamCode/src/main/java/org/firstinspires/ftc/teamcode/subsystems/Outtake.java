@@ -82,6 +82,10 @@ public class Outtake implements Subsystem {
                 .requires(this);
     }
 
+    public boolean isSpinning() {
+        return controlSystem.getGoal().getVelocity() != 0;
+    }
+
     @Override
     public void initialize() {
         motorRight = new MotorEx("shooter0"); // This one has the encoder cable
