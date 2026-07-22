@@ -4,6 +4,8 @@ import static org.firstinspires.ftc.teamcode.utils.Constants.*;
 
 import androidx.annotation.NonNull;
 
+import com.qualcomm.robotcore.hardware.DcMotor;
+
 import dev.nextftc.control.ControlSystem;
 import dev.nextftc.control.KineticState;
 import dev.nextftc.control.feedback.FeedbackElement;
@@ -83,7 +85,11 @@ public class Outtake implements Subsystem {
     @Override
     public void initialize() {
         motorRight = new MotorEx("shooter0"); // This one has the encoder cable
+        motorRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        motorRight.reverse();
         motorLeft = new MotorEx("shooter1");
+        motorLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        motorLeft.reverse();
         angleServo = new ServoEx("anglePivot");
 
     }

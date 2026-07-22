@@ -3,25 +3,26 @@ package org.firstinspires.ftc.teamcode.subsystems;
 import dev.nextftc.core.commands.Command;
 import dev.nextftc.core.subsystems.Subsystem;
 import dev.nextftc.hardware.impl.CRServoEx;
+import dev.nextftc.hardware.impl.MotorEx;
 import dev.nextftc.hardware.powerable.SetPower;
 
 public class Loader implements Subsystem {
     public static final Loader INSTANCE = new Loader();
     private Loader() { }
 
-    private CRServoEx crServo;
+    private MotorEx motor;
 
     public Command activate(double speed) {
-        return new SetPower(crServo, speed).requires(this);
+        return new SetPower(motor, speed).requires(this);
     }
 
     public Command deactivate() {
-        return new SetPower(crServo, 0).requires(this);
+        return new SetPower(motor, 0).requires(this);
     }
 
     @Override
     public void initialize() {
-        crServo = new CRServoEx("loader");
+        motor = new MotorEx("loaderMotor");
     }
 
 }

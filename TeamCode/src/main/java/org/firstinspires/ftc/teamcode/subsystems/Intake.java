@@ -22,5 +22,6 @@ public class Intake implements Subsystem {
     @Override
     public void initialize() {
         motor = new MotorEx("intakeMotor");
+        motor.reverse();
     }
 }
