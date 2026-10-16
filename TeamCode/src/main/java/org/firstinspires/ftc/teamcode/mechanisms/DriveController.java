@@ -38,6 +38,10 @@ public final class DriveController implements Mechanism {
     private long lastTime = System.nanoTime();
     private boolean hasLastAimError;
     private boolean lastAimUsedLimelight;
+    private String aimSource = "OFF";
+    private double aimErrorRad;
+    private double aimDesiredHeadingRad;
+    private double aimTurnCommand;
     private final TelemetryManager panelsTelemetry = PanelsTelemetry.INSTANCE.getTelemetry();
 
     public DriveController(KronBot robot) {
@@ -117,7 +121,10 @@ public final class DriveController implements Mechanism {
             resetAimPid();
             return false;
         }
-        resetAimPid();
+        // The trigger calls this every loop; preserve PID history while held.
+        if (!aimingAtTarget) {
+            resetAimPid();
+        }
         aimingAtTarget = true;
         return true;
     }
@@ -125,6 +132,8 @@ public final class DriveController implements Mechanism {
     public void stopAiming() {
         aimingAtTarget = false;
         resetAimPid();
+        aimSource = "OFF";
+        aimTurnCommand = 0.0;
     }
 
     public boolean isAiming() {
@@ -178,6 +187,13 @@ public final class DriveController implements Mechanism {
                 ? String.format("(%.2f, %.2f)", targetX, targetY)
                 : "NOT CONFIGURED");
         telemetry.addData("Autoaim", aimingAtTarget ? "ON" : "OFF");
+        if (aimingAtTarget) {
+            telemetry.addData("Aim PID source", aimSource);
+            telemetry.addData("Aim desired (deg)", "%.2f", Math.toDegrees(aimDesiredHeadingRad));
+            telemetry.addData("Aim error (deg)", "%.2f", Math.toDegrees(aimErrorRad));
+            telemetry.addData("Aim turn command", "%.3f", aimTurnCommand);
+            telemetry.addData("Aim in deadband", Math.abs(aimErrorRad) < AIM_DEADBAND_RAD);
+        }
     }
 
     private double getAimTurn() {
@@ -216,6 +232,7 @@ public final class DriveController implements Mechanism {
             integral = 0.0;
             lastError = error;
             hasLastAimError = true;
+            recordAimTelemetry(usingLimelight, error, desiredHeading, 0.0, txDeg);
             return 0.0;
         }
 
@@ -231,14 +248,23 @@ public final class DriveController implements Mechanism {
         double kP = usingLimelight ? Constants.LIMELIGHT_AIM_KP : AIM_KP;
         double kI = usingLimelight ? Constants.LIMELIGHT_AIM_KI : AIM_KI;
         double kD = usingLimelight ? Constants.LIMELIGHT_AIM_KD : AIM_KD;
-        double output = kP * error + kI * integral + kD * derivative;
-        panelsTelemetry.addData("Aim PID source", usingLimelight ? "Limelight" : "Odometry");
+        double output = clamp(kP * error + kI * integral + kD * derivative, 1.0);
+        recordAimTelemetry(usingLimelight, error, desiredHeading, output, txDeg);
+        return output;
+    }
+
+    private void recordAimTelemetry(boolean usingLimelight, double error,
+                                    double desiredHeading, double output, double txDeg) {
+        aimSource = usingLimelight ? "Limelight" : "Odometry";
+        aimErrorRad = error;
+        aimDesiredHeadingRad = desiredHeading;
+        aimTurnCommand = output;
+        panelsTelemetry.addData("Aim PID source", aimSource);
         panelsTelemetry.addData("Aim Error", error);
         panelsTelemetry.addData("Aim Desired", desiredHeading);
         panelsTelemetry.addData("Aim Output", output);
         panelsTelemetry.addData("TX deg", txDeg);
         panelsTelemetry.update();
-        return clamp(output, 1.0);
     }
 
     private void resetAimPid() {

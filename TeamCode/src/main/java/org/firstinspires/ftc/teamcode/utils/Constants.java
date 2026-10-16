@@ -9,8 +9,10 @@ public final class Constants {
     public static double CONTROLLER_DEADZONE = 0.05;
     public static double MANUAL_SPEED = 1.0;
     public static double PATH_MAX_POWER = 0.8;
-    public static double BLUE_BASKET_COMMON_X = 82.5;
+    public static double BLUE_BASKET_1_X = 82.5;
     public static double BLUE_BASKET_1_Y = 58;
+    public static double BLUE_BASKET_2_X = 80.5;
+
     public static double BLUE_BASKET_2_Y = 87;
 
     public static double RED_BASKET_COMMON_X = 58.5;

@@ -88,8 +88,8 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         handlePoseReset();
         handleIntakeButtons();
 
-        robot.drive.runManual(controls);
         updateAimPipeline();
+        robot.drive.runManual(controls);
         robot.update();
         addDriverTelemetry();
         telemetry.update();

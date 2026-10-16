@@ -11,9 +11,9 @@ public final class BlueAllianceTeleOp extends AllianceDrivingTeleOp {
         super(
                 robot,
                 "BLUE",
-                () -> Constants.BLUE_BASKET_COMMON_X,
+                () -> Constants.BLUE_BASKET_1_X,
                 () -> Constants.BLUE_BASKET_1_Y,
-                () -> Constants.BLUE_BASKET_COMMON_X,
+                () -> Constants.BLUE_BASKET_2_X,
                 () -> Constants.BLUE_BASKET_2_Y,
                 Constants.LIMELIGHT_BLUE_1_PIPELINE,
                 Constants.LIMELIGHT_BLUE_2_PIPELINE);
