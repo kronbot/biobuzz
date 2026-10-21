@@ -3,16 +3,26 @@ package org.firstinspires.ftc.teamcode.opmodes.teleop;
 import com.pedropathing.geometry.Pose;
 
 import org.firstinspires.ftc.teamcode.KronBot;
+import org.firstinspires.ftc.teamcode.mechanisms.LimelightController;
 import org.firstinspires.ftc.teamcode.utils.Constants;
 import org.firstinspires.ftc.teamcode.utils.Controls;
+import org.firstinspires.ftc.teamcode.utils.PsiKitNextBridge;
 import org.firstinspires.ftc.teamcode.utils.PoseStorage;
+import org.psilynx.psikit.ftc.PedroFollowerOdometryLogger;
 
 import java.util.function.DoubleSupplier;
+import org.psilynx.psikit.core.Logger;
 
 import dev.nextftc.robot.opmode.NextOpMode;
 import dev.nextftc.robot.opmode.OpModeHook;
 
 public abstract class AllianceDrivingTeleOp extends NextOpMode {
+    static {
+        // PsiKit only accepts metadata before logging starts, so record it up front.
+        PsiKitNextBridge.recordMetadata("Robot", "MyRobot");
+        PsiKitNextBridge.recordMetadata("Mode", "TeleOp");
+    }
+
     private final String allianceName;
     private final KronBot robot;
     private final Controls controls;
@@ -32,7 +42,7 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
             DoubleSupplier basket2Y,
             int basket1Pipeline,
             int basket2Pipeline) {
-        super(robot, stopRobotOnExit(robot));
+        super(robot, stopRobotOnExit(robot), new PsiKitNextBridge.Hook());
         this.robot = robot;
         this.allianceName = allianceName;
         this.basket1Pipeline = basket1Pipeline;
@@ -71,6 +81,7 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         }
 
         robot.update();
+        logPsiKit();
         addInitTelemetry();
     }
 
@@ -91,6 +102,7 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         updateAimPipeline();
         robot.drive.runManual(controls);
         robot.update();
+        logPsiKit();
         addDriverTelemetry();
         telemetry.update();
     }
@@ -152,6 +164,24 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
                 }
             }
         };
+    }
+
+    private void logPsiKit() {
+        if (robot.follower != null) {
+            Pose pose = robot.follower.getPose();
+            PedroFollowerOdometryLogger.log("follower", pose.getX(), pose.getY(), pose.getHeading());
+        }
+        Logger.recordOutput("Robot/FieldCentric", robot.drive.isFieldCentric());
+        Logger.recordOutput("Robot/ManualDrive", robot.drive.isManual());
+        Logger.recordOutput("Drive/Aiming", robot.drive.isAiming());
+        Logger.recordOutput("Drive/AimTarget", robot.drive.getSelectedAimTargetNumber());
+        Logger.recordOutput("Drive/Cmd/LeftStickY", controls.leftStickY);
+        Logger.recordOutput("Drive/Cmd/RightStickX", controls.rightStickX);
+        Logger.recordOutput("Vision/Tx", LimelightController.getAimTx());
+        Logger.recordOutput("Vision/SeesTag", LimelightController.seesArpilTag());
+        if (robot.intake != null) {
+            Logger.recordOutput("Intake/On", robot.intake.isOn());
+        }
     }
 
     private void addInitTelemetry() {
