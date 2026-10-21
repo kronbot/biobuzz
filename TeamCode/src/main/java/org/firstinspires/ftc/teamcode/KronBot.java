@@ -16,10 +16,8 @@ import dev.nextftc.robot.Mechanism;
 import dev.nextftc.robot.NextRobot;
 
 public final class KronBot implements NextRobot {
-    public static final boolean INTAKE_ENABLED = false;
-
     public final DriveController drive = new DriveController(this);
-    public final IntakeController intake = INTAKE_ENABLED ? new IntakeController() : null;
+    public final IntakeController intake = new IntakeController();
     public final LimelightController vision = new LimelightController();
     public Follower follower;
     private final Set<Mechanism> mechanisms;

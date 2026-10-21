@@ -207,7 +207,6 @@ public final class DriveController implements Mechanism {
         double txDeg = LimelightController.getAimTx();
         boolean usingLimelight = Double.isFinite(txDeg);
         if (hasLastAimError && usingLimelight != lastAimUsedLimelight) {
-            // Do not carry integral or derivative history between error sources.
             resetAimPid();
         }
         lastAimUsedLimelight = usingLimelight;

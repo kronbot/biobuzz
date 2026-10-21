@@ -27,9 +27,6 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
     private final KronBot robot;
     private final Controls controls;
     private Pose selectedStartPose;
-
-    private static boolean canSave = false;
-
     private final int basket1Pipeline;
     private final int basket2Pipeline;
 
@@ -49,7 +46,6 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         this.basket2Pipeline = basket2Pipeline;
         controls = new Controls(gamepad1);
         selectedStartPose = leftStartPose();
-        canSave = false;
 
         try {
             robot.initialize(hardwareMap, selectedStartPose);
@@ -88,7 +84,6 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
     @Override
     public void start() {
         robot.vision.start();
-        canSave = true;
     }
 
     @Override
@@ -144,10 +139,13 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
             return;
         }
         if (controls.rightBumper.justPressed()) {
-            robot.intake.toggle(false);
+            robot.intake.turnOn(false);
         }
-        if (controls.leftBumper.justPressed()) {
-            robot.intake.toggle(true);
+        else if (controls.leftBumper.justPressed()) {
+            robot.intake.turnOn(true);
+        }
+        else {
+            robot.intake.turnOff();
         }
     }
 
@@ -156,7 +154,7 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
             @Override
             public void afterEnd() {
                 try {
-                    if (canSave && robot.follower != null) {
+                    if (robot.follower != null) {
                         PoseStorage.savePose(robot.follower.getPose());
                     }
                 } finally {

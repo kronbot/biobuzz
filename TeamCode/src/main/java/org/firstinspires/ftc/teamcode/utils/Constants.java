@@ -15,7 +15,9 @@ public final class Constants {
 
     public static double BLUE_BASKET_2_Y = 87;
 
-    public static double RED_BASKET_COMMON_X = 58.5;
+    public static double RED_BASKET_1_X = 58.5;
+    public static double RED_BASKET_2_X = 50.5;
+
     public static double RED_BASKET_1_Y = 53;
     public static double RED_BASKET_2_Y = 87;
 
@@ -26,7 +28,7 @@ public final class Constants {
     public static double LIMELIGHT_AIM_KI = 0.8;
     public static double LIMELIGHT_AIM_KD = 0.05;
     public static double LIMELIGHT_AIM_HOLD_SECONDS = 0.1;
-    public static double AIM_DEADBAND_RAD = Math.toRadians(1.5);
+    public static double AIM_DEADBAND_RAD = Math.toRadians(2.5);
     public static double AIM_INTEGRAL_LIMIT = 0.5;
 
     public static double LEFT_START_X = 9.0;
@@ -45,8 +47,6 @@ public final class Constants {
 
     public static final int LIMELIGHT_BLUE_1_PIPELINE = 3;
     public static final int LIMELIGHT_BLUE_2_PIPELINE = 4;
-
-    public static final int LIMELIGHT_CORRECTION_DEADBAND = 10; // 10 grade, +- 5
 
     private Constants() {}
 
