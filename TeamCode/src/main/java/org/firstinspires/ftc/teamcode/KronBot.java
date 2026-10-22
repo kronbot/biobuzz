@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.teamcode.mechanisms.DriveController;
 import org.firstinspires.ftc.teamcode.mechanisms.IntakeController;
 import org.firstinspires.ftc.teamcode.mechanisms.LimelightController;
+import org.firstinspires.ftc.teamcode.mechanisms.TransferController;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -18,6 +19,8 @@ import dev.nextftc.robot.NextRobot;
 public final class KronBot implements NextRobot {
     public final DriveController drive = new DriveController(this);
     public final IntakeController intake = new IntakeController();
+
+    public final TransferController transfer = new TransferController();
     public final LimelightController vision = new LimelightController();
     public Follower follower;
     private final Set<Mechanism> mechanisms;
@@ -26,9 +29,8 @@ public final class KronBot implements NextRobot {
         Set<Mechanism> mechanisms = new LinkedHashSet<>();
         mechanisms.add(drive);
         mechanisms.add(vision);
-        if (intake != null) {
-            mechanisms.add(intake);
-        }
+        mechanisms.add(intake);
+        mechanisms.add(transfer);
         this.mechanisms = Collections.unmodifiableSet(mechanisms);
     }
 
@@ -43,9 +45,8 @@ public final class KronBot implements NextRobot {
         follower.setStartingPose(startingPose);
         follower.update();
         drive.initialize();
-        if (intake != null) {
-            intake.initialize(hardwareMap);
-        }
+        intake.initialize(hardwareMap);
+        transfer.initialize(hardwareMap);
     }
 
     public void update() {
@@ -62,8 +63,10 @@ public final class KronBot implements NextRobot {
         try {
             drive.stop();
         } finally {
-            if (intake != null) {
+            try {
                 intake.turnOff();
+            } finally {
+                transfer.turnOff();
             }
         }
     }

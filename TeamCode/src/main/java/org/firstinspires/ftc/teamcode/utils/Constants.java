@@ -39,7 +39,8 @@ public final class Constants {
     public static double CENTER_Y = 72.0;
     public static double CENTER_HEADING_DEG = 90.0;
 
-    public static double INTAKE_POWER = 0.3;
+    public static double INTAKE_POWER = 1;
+    public static double TRANSFER_POWER = 1;
 
     public static final int LIMELIGHT_RED_1_PIPELINE = 1;
 
