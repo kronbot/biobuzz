@@ -12,6 +12,8 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.List;
+import java.util.ArrayList;
+import java.nio.file.Files;
 
 public class ReplayOpTest {
     @Rule public TemporaryFolder directory = new TemporaryFolder();
@@ -86,8 +88,75 @@ public class ReplayOpTest {
     @Test public void rejectsNonFiniteVelocityBeforeDriving() throws Exception {
         String[] bad = row(0.02, true, 0, 0, false).split(",");
         bad[15] = "NaN";
-        File file = write(RecordingFormat.HEADER, row(0, true, 0, 0, false), String.join(",", bad));
+        File file = write(RecordingFormat.HEADER, row(0, true, 0, 0, false),
+                String.join(",", bad), row(0.04, true, 0, 0, false));
         assertThrows(IOException.class, () -> ReplayOp.loadRecording(file, true, false));
+    }
+
+    @Test public void recoversOneTruncatedFinalRowWithoutChangingTheFile() throws Exception {
+        File file = write(RecordingFormat.HEADER,
+                row(0, true, 0, 0, false), row(0.02, true, 0, 0, false));
+        try (FileWriter writer = new FileWriter(file, true)) {
+            writer.write("0.04,0.2,0.2,0.2"); // Interrupted write: no remaining columns or newline.
+        }
+        byte[] original = Files.readAllBytes(file.toPath());
+        List<String> warnings = new ArrayList<>();
+        List<ReplayOp.RobotFrame> frames = ReplayOp.loadRecording(file, true, false, warnings::add);
+        assertEquals(2, frames.size());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("line 4"));
+        assertArrayEquals(original, Files.readAllBytes(file.toPath()));
+    }
+
+    @Test public void recoversOneFinalRowWithNonFiniteSensorValue() throws Exception {
+        String[] invalid = row(0.04, true, 0, 0, false).split(",");
+        invalid[17] = "NaN";
+        File file = write(RecordingFormat.HEADER,
+                row(0, true, 0, 0, false), row(0.02, true, 0, 0, false),
+                String.join(",", invalid));
+        List<String> warnings = new ArrayList<>();
+        assertEquals(2, ReplayOp.loadRecording(file, true, false, warnings::add).size());
+        assertTrue(warnings.get(0).contains("Non-finite"));
+    }
+
+    @Test public void keepsCompleteFinalRowEvenWithoutNewline() throws Exception {
+        File file = write(RecordingFormat.HEADER,
+                row(0, true, 0, 0, false), row(0.02, true, 0, 0, false));
+        try (FileWriter writer = new FileWriter(file, true)) {
+            writer.write(row(0.04, true, 0, 0, false));
+        }
+        List<String> warnings = new ArrayList<>();
+        assertEquals(3, ReplayOp.loadRecording(file, true, false, warnings::add).size());
+        assertTrue(warnings.isEmpty());
+    }
+
+    @Test public void rejectsTruncatedRowInMiddleAndMultipleBrokenFinalRows() throws Exception {
+        for (String following : new String[]{row(0.06, true, 0, 0, false), "0.06,9"}) {
+            File file = write(RecordingFormat.HEADER,
+                    row(0, true, 0, 0, false), row(0.02, true, 0, 0, false),
+                    "0.04,9", following);
+            assertThrows(IOException.class, () -> ReplayOp.loadRecording(file, true, false));
+        }
+    }
+
+    @Test public void rejectsWrongAllianceAndUnavailableTransferEvenOnFinalRow() throws Exception {
+        for (String last : new String[]{row(0.04, false, 0, 0, false),
+                row(0.04, true, 0, 1, false)}) {
+            File file = write(RecordingFormat.HEADER,
+                    row(0, true, 0, 0, false), row(0.02, true, 0, 0, false), last);
+            assertThrows(IOException.class, () -> ReplayOp.loadRecording(file, true, false));
+        }
+    }
+
+    @Test public void rejectsInvalidSensorRowsBeforeRecording() {
+        for (int column : new int[]{5, 8, 15, 17}) {
+            String[] values = row(0, true, 0, 0, false).split(",");
+            values[column] = "NaN";
+            assertThrows(NumberFormatException.class, () -> RecordingFormat.validateRow(values));
+        }
+        String[] invalidVoltage = row(0, true, 0, 0, false).split(",");
+        invalidVoltage[8] = "0";
+        assertThrows(NumberFormatException.class, () -> RecordingFormat.validateRow(invalidVoltage));
     }
 
     @Test public void manualFeedforwardMatchesRecordedSticks() throws Exception {

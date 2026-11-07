@@ -68,6 +68,15 @@ Fișierele vechi de 18 coloane din implementarea anterioară trebuie reînregist
 nu sunt interpretate ca noul format de 25 de coloane. Și traseele de 21 de coloane
 din FTC_TestRobot trebuie reînregistrate pentru mecanismele Biobuzz.
 
+Recorderul verifică rândul înainte de scriere; o valoare nevalidă de la senzori
+oprește înregistrarea cu `FAILED`, păstrând cadrele deja scrise. Replay-ul poate
+ignora o singură ultimă linie incompletă sau numeric invalidă, numai dacă rămân
+cel puțin două cadre valide. Afișează `Recording warning` și nu modifică fișierul
+original. Lipsa unui newline după un ultim rând complet nu este o eroare.
+Rândurile invalide din mijloc, mai multe rânduri stricate la final, ordinea
+greșită a timpilor, alianța greșită și comenzile pentru un transfer dezactivat
+blochează în continuare redarea.
+
 TeleOp-urile și recorderele păstrează NextFTC și PsiKit, deja folosite de proiect.
 Replay-ul are ciclul standard FTC `LinearOpMode`; bridge-ul PsiKit nu îl învelește.
 În replay, cache-ul hub-urilor este pus în AUTO, inclusiv după un TeleOp care a

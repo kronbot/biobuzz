@@ -106,7 +106,7 @@ public abstract class RecorderOp extends AllianceDrivingTeleOp {
         double intakePower = robot.intake.getPower();
         double transferPower = robot.transfer.getPower();
         try {
-            dataRecorder.write(String.format(Locale.US,
+            String row = String.format(Locale.US,
                     "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,"
                             + "%.4f,%.4f,%.4f,%d,%d,%d,%.4f,%.4f,%.4f,%d,%d,%d,"
                             + "%.4f,%.4f,%d,%d\n",
@@ -122,7 +122,14 @@ public abstract class RecorderOp extends AllianceDrivingTeleOp {
                     pinpoint.getHeadingVelocity(UnnormalizedAngleUnit.RADIANS),
                     robot.drive.isFieldCentric() ? 1 : 0, robot.drive.isAiming() ? 1 : 0,
                     blueAlliance ? 1 : 0, intakePower, transferPower,
-                    robot.vision.getSelectedPipeline(), controls.leftStickButton.justPressed() ? 1 : 0));
+                    robot.vision.getSelectedPipeline(), controls.leftStickButton.justPressed() ? 1 : 0);
+            // Reject invalid sensor values before they can become the final row in the CSV.
+            try {
+                RecordingFormat.validateRow(row.trim().split(",", -1));
+            } catch (NumberFormatException invalidFrame) {
+                throw new IOException("Invalid recording frame: " + invalidFrame.getMessage(), invalidFrame);
+            }
+            dataRecorder.write(row);
             lastRecordTime = sampleTime;
             lastIntakePower = intakePower;
             lastTransferPower = transferPower;
@@ -147,7 +154,9 @@ public abstract class RecorderOp extends AllianceDrivingTeleOp {
         if (dataRecorder == null) return;
         try {
             dataRecorder.close(); // BufferedWriter.close() also flushes.
-            RobotLog.ii("Recorder", "Saved %d frames: %s", frameCount, recordingFilePath);
+            if (recordingError == null) {
+                RobotLog.ii("Recorder", "Saved %d frames: %s", frameCount, recordingFilePath);
+            }
         } catch (IOException e) {
             handleRecordingError(e);
         } finally {

@@ -19,11 +19,10 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /** FTC_TestRobot replay loop, adapted to Biobuzz mechanisms and alliance aiming. */
 public abstract class ReplayOp extends LinearOpMode {
-    private static final int CSV_COLUMN_COUNT = RecordingFormat.COLUMN_COUNT;
-
     private static final int MODE_MANUAL = 0;
     private static final int MODE_FOLLOWING_PATH = 1;
     private static final int MODE_HOLDING_POSE = 2;
@@ -49,6 +48,7 @@ public abstract class ReplayOp extends LinearOpMode {
     private final ElapsedTime replayTimer = new ElapsedTime();
 
     private File recordingFile;
+    private String recordingWarning;
     private boolean robotInitialized;
     private double currentVoltage = 13.0;
     private double lastVoltageReadTime = -10;
@@ -57,7 +57,11 @@ public abstract class ReplayOp extends LinearOpMode {
     public void runOpMode() {
         try {
             recordingFile = RecordingFormat.file(blueAlliance);
-            frames.addAll(loadRecording(recordingFile, blueAlliance, Constants.TRANSFER_ENABLED));
+            frames.addAll(loadRecording(recordingFile, blueAlliance, Constants.TRANSFER_ENABLED,
+                    warning -> {
+                        recordingWarning = warning;
+                        RobotLog.ww("Replay", "%s", warning);
+                    }));
             // A preceding NextFTC/PsiKit TeleOp may have left the hubs in MANUAL cache mode.
             for (LynxModule hub : hardwareMap.getAll(LynxModule.class)) {
                 hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
@@ -72,6 +76,7 @@ public abstract class ReplayOp extends LinearOpMode {
             telemetry.addData("Replay file", recordingFile.getAbsolutePath());
             telemetry.addData("Frames", frames.size());
             telemetry.addData("Duration", "%.2f s", duration());
+            if (recordingWarning != null) telemetry.addData("Recording warning", recordingWarning);
             telemetry.addLine("Ready to replay");
             telemetry.update();
 
@@ -259,6 +264,7 @@ public abstract class ReplayOp extends LinearOpMode {
             meanPositionError += positionError;
             peakPositionError = Math.max(peakPositionError, positionError);
             telemetry.addData("Time", "%.2f / %.2f s", now, replayDuration);
+            if (recordingWarning != null) telemetry.addData("Recording warning", recordingWarning);
             telemetry.addData("Frame", "%d / %d", frameIndex + 1, frames.size());
             telemetry.addData("Recorded mode", modeName(a.driveMode));
             telemetry.addData("Drive frame", fieldCentric ? "Field centric" : "Robot centric");
@@ -284,7 +290,13 @@ public abstract class ReplayOp extends LinearOpMode {
 
     static List<RobotFrame> loadRecording(File file, boolean expectedBlue, boolean transferEnabled)
             throws IOException {
+        return loadRecording(file, expectedBlue, transferEnabled, warning -> {});
+    }
+
+    static List<RobotFrame> loadRecording(File file, boolean expectedBlue, boolean transferEnabled,
+                                         Consumer<String> reportWarning) throws IOException {
         List<RobotFrame> frames = new ArrayList<>();
+        IOException invalidFinalRow = null;
         if (!file.isFile()) {
             throw new IOException("Recording not found: " + file.getAbsolutePath());
         }
@@ -306,30 +318,36 @@ public abstract class ReplayOp extends LinearOpMode {
                 if (line.trim().isEmpty()) {
                     continue;
                 }
-
-                String[] values = line.split(",", -1);
-                if (values.length != CSV_COLUMN_COUNT) {
-                    throw new IOException("Invalid column count on CSV line " + lineNumber);
+                // A malformed row is recoverable only if no further non-empty row follows it.
+                if (invalidFinalRow != null) {
+                    throw invalidFinalRow;
                 }
-
+                RobotFrame frame;
                 try {
-                    RobotFrame frame = new RobotFrame(values);
-                    validateFrame(frame, lineNumber, frames);
-                    if (frame.aimingAtBlue != expectedBlue) {
-                        throw new IOException("Recording belongs to the other alliance, line " + lineNumber);
-                    }
-                    if (!transferEnabled && frame.transferPower != 0) {
-                        throw new IOException("Recording requires the transfer motor; record again with transfer disabled");
-                    }
-                    frames.add(frame);
+                    frame = new RobotFrame(line.split(",", -1));
                 } catch (NumberFormatException e) {
-                    throw new IOException("Invalid number on CSV line " + lineNumber, e);
+                    invalidFinalRow = new IOException("Invalid CSV line " + lineNumber
+                            + ": " + e.getMessage(), e);
+                    continue;
                 }
+                // These errors must never be hidden, even on the final row.
+                validateFrame(frame, lineNumber, frames);
+                if (frame.aimingAtBlue != expectedBlue) {
+                    throw new IOException("Recording belongs to the other alliance, line " + lineNumber);
+                }
+                if (!transferEnabled && frame.transferPower != 0) {
+                    throw new IOException("Recording requires the transfer motor; record again with transfer disabled");
+                }
+                frames.add(frame);
             }
         }
 
         if (frames.size() < 2) {
+            if (invalidFinalRow != null) throw invalidFinalRow;
             throw new IOException("Recording needs at least two frames; press PLAY in Recorder first");
+        }
+        if (invalidFinalRow != null) {
+            reportWarning.accept("Ignored final row. " + invalidFinalRow.getMessage());
         }
         return frames;
     }
@@ -475,11 +493,7 @@ public abstract class ReplayOp extends LinearOpMode {
         final boolean poseReset;
 
         RobotFrame(String[] values) {
-            for (String value : values) {
-                if (!Double.isFinite(Double.parseDouble(value))) {
-                    throw new NumberFormatException("Non-finite CSV value");
-                }
-            }
+            RecordingFormat.validateRow(values);
             timestamp = Double.parseDouble(values[0]);
             leftRearPower = Double.parseDouble(values[1]);
             rightRearPower = Double.parseDouble(values[2]);
@@ -505,10 +519,6 @@ public abstract class ReplayOp extends LinearOpMode {
             transferPower = Double.parseDouble(values[22]);
             aimPipeline = Integer.parseInt(values[23]);
             poseReset = parseBoolean(values[24]);
-            if (timestamp < 0 || voltage <= 1 || Math.abs(intakePower) > 1
-                    || Math.abs(transferPower) > 1 || aimPipeline < 0 || aimPipeline > 9) {
-                throw new NumberFormatException("Invalid time, voltage, mechanism power, or pipeline");
-            }
         }
 
         DriveCommand feedforward() {

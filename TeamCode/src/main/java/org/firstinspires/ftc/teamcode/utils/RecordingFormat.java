@@ -22,5 +22,24 @@ public final class RecordingFormat {
                 blueAlliance ? BLUE_FILE_NAME : RED_FILE_NAME);
     }
 
+    /** The same row checks are used before writing and while loading. */
+    public static void validateRow(String[] values) {
+        if (values.length != COLUMN_COUNT) {
+            throw new NumberFormatException("Expected " + COLUMN_COUNT + " columns, got " + values.length);
+        }
+        for (int i = 0; i < values.length; i++) {
+            if (!Double.isFinite(Double.parseDouble(values[i]))) {
+                throw new NumberFormatException("Non-finite value in column " + (i + 1));
+            }
+        }
+        int pipeline = Integer.parseInt(values[23]);
+        if (Double.parseDouble(values[0]) < 0 || Double.parseDouble(values[8]) <= 1
+                || Math.abs(Double.parseDouble(values[21])) > 1
+                || Math.abs(Double.parseDouble(values[22])) > 1
+                || pipeline < 0 || pipeline > 9) {
+            throw new NumberFormatException("Invalid time, voltage, mechanism power, or pipeline");
+        }
+    }
+
     private RecordingFormat() {}
 }
