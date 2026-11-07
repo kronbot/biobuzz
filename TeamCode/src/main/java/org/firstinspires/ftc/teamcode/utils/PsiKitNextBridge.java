@@ -12,6 +12,7 @@ import org.firstinspires.ftc.ftccommon.external.OnCreateEventLoop;
 import org.psilynx.psikit.core.Logger;
 import org.psilynx.psikit.ftc.FtcLoggingSession;
 import org.psilynx.psikit.ftc.autolog.PsiKitAutoLog;
+import org.psilynx.psikit.ftc.autolog.PsiKitNoAutoLog;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -35,8 +36,8 @@ import dev.nextftc.robot.opmode.OpModeHook;
  * </ul>
  *
  * <p>Iterative OpModes (e.g. Pedro's {@code Tuning}) are handled by PsiKit's own
- * {@code @PsiKitAutoLog} wrapper — this bridge only processes linear OpModes, and defers any
- * linear OpMode that is itself annotated with {@code @PsiKitAutoLog}.
+ * {@code @PsiKitAutoLog} wrapper. Linear OpModes annotated with {@code @PsiKitNoAutoLog}
+ * opt out; those annotated with {@code @PsiKitAutoLog} use PsiKit's own session.
  *
  * <p>Do not enable {@code PsiKitAutoLogSettings.enabledByDefault} — that would make PsiKit start a
  * second, conflicting session on {@code BoundNextOpMode} at Play.
@@ -47,7 +48,8 @@ public final class PsiKitNextBridge {
      * Live RLOG streaming port for AdvantageScope. Set to {@code 0} to disable streaming.
      * Live streaming is NOT allowed during competition — disable it before your matches.
      */
-    public static final int RLOG_PORT = 5800;
+    // Panels Limelight Proxy already binds port 5800.
+    public static final int RLOG_PORT = 5801;
 
     private static final String RLOG_FOLDER = "/sdcard/FIRST/PsiKit/";
 
@@ -182,7 +184,8 @@ public final class PsiKitNextBridge {
     private static final class Listener implements OpModeManagerNotifier.Notifications {
         @Override
         public void onOpModePreInit(OpMode opMode) {
-            if (!(opMode instanceof LinearOpMode)) {
+            if (!(opMode instanceof LinearOpMode)
+                    || opMode.getClass().isAnnotationPresent(PsiKitNoAutoLog.class)) {
                 return;
             }
             // A linear OpMode using PsiKit's own autolog manages its session itself.

@@ -42,9 +42,6 @@ public final class DriveController implements Mechanism {
     private double aimErrorRad;
     private double aimDesiredHeadingRad;
     private double aimTurnCommand;
-    private double commandForward;
-    private double commandStrafe;
-    private double commandTurn;
     private final TelemetryManager panelsTelemetry = PanelsTelemetry.INSTANCE.getTelemetry();
 
     public DriveController(KronBot robot) {
@@ -56,12 +53,19 @@ public final class DriveController implements Mechanism {
         fieldCentric = false;
         aimingAtTarget = false;
         selectedAimTarget = 0;
-        commandForward = 0;
-        commandStrafe = 0;
-        commandTurn = 0;
         robot.follower.setMaxPowerScaling(1.0);
         robot.follower.startTeleopDrive(true);
         resetAimPid();
+    }
+
+    public void configureAlliance(boolean blue) {
+        if (blue) {
+            configureAimTargets(() -> Constants.BLUE_BASKET_1_X, () -> Constants.BLUE_BASKET_1_Y,
+                    () -> Constants.BLUE_BASKET_2_X, () -> Constants.BLUE_BASKET_2_Y);
+        } else {
+            configureAimTargets(() -> Constants.RED_BASKET_1_X, () -> Constants.RED_BASKET_1_Y,
+                    () -> Constants.RED_BASKET_2_X, () -> Constants.RED_BASKET_2_Y);
+        }
     }
 
     public void configureAimTargets(
@@ -94,17 +98,8 @@ public final class DriveController implements Mechanism {
                 ? getAimTurn()
                 : Constants.applyDeadzone(-controls.rightStickX);
 
-        commandForward = forward;
-        commandStrafe = strafe;
-        commandTurn = turn;
         robot.follower.setTeleOpDrive(forward, strafe, turn, !fieldCentric);
     }
-
-    public double getCommandForward() { return commandForward; }
-
-    public double getCommandStrafe() { return commandStrafe; }
-
-    public double getCommandTurn() { return commandTurn; }
 
 //    public void driveTo(Pose destination) {
 //        Pose currentPose = robot.follower.getPose();

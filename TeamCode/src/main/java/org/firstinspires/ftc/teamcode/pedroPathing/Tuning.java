@@ -35,6 +35,7 @@ import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.psilynx.psikit.ftc.autolog.PsiKitAutoLog;
+import org.firstinspires.ftc.teamcode.utils.PsiKitNextBridge;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -46,7 +47,7 @@ import java.util.List;
  * @version 1.0, 6/26/2025
  */
 @Configurable
-@PsiKitAutoLog
+@PsiKitAutoLog(rlogPort = PsiKitNextBridge.RLOG_PORT)
 @TeleOp(name = "Tuning", group = "Pedro Pathing")
 public class Tuning extends SelectableOpMode {
     public static Follower follower;

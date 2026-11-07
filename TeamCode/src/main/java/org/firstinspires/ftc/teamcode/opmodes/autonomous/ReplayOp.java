@@ -1,216 +1,534 @@
 package org.firstinspires.ftc.teamcode.opmodes.autonomous;
 
-import android.os.Environment;
-
 import com.pedropathing.geometry.Pose;
 import com.pedropathing.math.Vector;
-import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
-import com.qualcomm.robotcore.hardware.VoltageSensor;
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
+import com.qualcomm.robotcore.util.Range;
+import com.qualcomm.robotcore.util.RobotLog;
 
-import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 import org.firstinspires.ftc.teamcode.KronBot;
-import org.firstinspires.ftc.teamcode.utils.Alliance;
+import com.qualcomm.hardware.lynx.LynxModule;
+import org.firstinspires.ftc.teamcode.utils.Constants;
 import org.firstinspires.ftc.teamcode.utils.PoseStorage;
-import org.firstinspires.ftc.teamcode.utils.PsiKitNextBridge;
 import org.firstinspires.ftc.teamcode.utils.RecordingFormat;
-import org.firstinspires.ftc.teamcode.utils.RecordingFormat.Frame;
-import org.firstinspires.ftc.teamcode.utils.ReplayController;
-import org.psilynx.psikit.core.Logger;
-import org.psilynx.psikit.ftc.PedroFollowerOdometryLogger;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.util.Collections;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
-import dev.nextftc.robot.opmode.NextOpMode;
-import dev.nextftc.robot.opmode.OpModeHook;
+/** FTC_TestRobot replay loop, adapted to Biobuzz mechanisms and alliance aiming. */
+public abstract class ReplayOp extends LinearOpMode {
+    private static final int CSV_COLUMN_COUNT = RecordingFormat.COLUMN_COUNT;
 
-/** Shared replay engine; concrete OpModes select an alliance and its recording. */
-public abstract class ReplayOp extends NextOpMode {
-    private final KronBot robot;
-    private final Alliance alliance;
-    private final File file;
-    private final ElapsedTime timer = new ElapsedTime();
-    private final ReplayController controller = new ReplayController();
-    private List<Frame> frames = Collections.emptyList();
-    private GoBildaPinpointDriver pinpoint;
-    private VoltageSensor voltageSensor;
-    private String error;
-    private boolean initialized;
-    private boolean running;
-    private boolean completed;
-    private int frameIndex;
-    private int poseResetId;
-    private double currentVoltage;
-    private double lastVoltageTime = -1;
-    private double peakError;
-    private double totalError;
-    private int ticks;
+    private static final int MODE_MANUAL = 0;
+    private static final int MODE_FOLLOWING_PATH = 1;
+    private static final int MODE_HOLDING_POSE = 2;
+    private static final double TRANSLATION_KP = 0.022;
+    private static final double TRANSLATION_KD = 0.013;
+    private static final double ROTATION_KP = 0.30;
+    private static final double ROTATION_KD = 0.08;
+    private static final double VELOCITY_FILTER_ALPHA = 0.25;
+    private static final double MAX_TRANSLATION_CORRECTION = 0.35;
+    private static final double MAX_ROTATION_CORRECTION = 0.30;
+    private static final double MIN_VOLTAGE_SCALE = 0.90;
+    private static final double MAX_VOLTAGE_SCALE = 1.10;
+    private static final double VOLTAGE_REFRESH_SEC = 0.10;
+    private static final double MIN_DT = 0.008;
+    private final KronBot robot = new KronBot();
+    private final boolean blueAlliance;
 
-    protected ReplayOp(KronBot robot, Alliance alliance) {
-        super(robot, stopRobotOnExit(robot), new PsiKitNextBridge.Hook());
-        this.robot = robot;
-        this.alliance = alliance;
-        file = new File(Environment.getExternalStorageDirectory(), alliance.recordingFileName);
+    protected ReplayOp(boolean blueAlliance) {
+        this.blueAlliance = blueAlliance;
+    }
+
+    private final List<RobotFrame> frames = new ArrayList<>();
+    private final ElapsedTime replayTimer = new ElapsedTime();
+
+    private File recordingFile;
+    private boolean robotInitialized;
+    private double currentVoltage = 13.0;
+    private double lastVoltageReadTime = -10;
+
+    @Override
+    public void runOpMode() {
         try {
-            // A bad/missing CSV is reported during INIT, before hardware is enabled.
-            frames = RecordingFormat.load(file, alliance.name());
-            robot.initialize(hardwareMap, poseOf(frames.get(0)));
-            alliance.configureDrive(robot.drive);
-            robot.vision.initialize(hardwareMap, frames.get(0).aimPipeline);
-            pinpoint = hardwareMap.get(GoBildaPinpointDriver.class, "pinpoint");
-            voltageSensor = hardwareMap.voltageSensor.iterator().next();
-            initialized = true;
-        } catch (Exception failure) {
-            error = failure.getMessage() == null
-                    ? failure.getClass().getSimpleName() : failure.getMessage();
-            robot.release();
-        } catch (Error failure) {
-            robot.release();
-            throw failure;
-        }
-    }
+            recordingFile = RecordingFormat.file(blueAlliance);
+            frames.addAll(loadRecording(recordingFile, blueAlliance, Constants.TRANSFER_ENABLED));
+            // A preceding NextFTC/PsiKit TeleOp may have left the hubs in MANUAL cache mode.
+            for (LynxModule hub : hardwareMap.getAll(LynxModule.class)) {
+                hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
+            }
 
-    @Override
-    public void disabledPeriodic() {
-        if (initialized) robot.update();
-        addStatusTelemetry();
-        telemetry.addLine("Place the robot at the recorded physical starting position before PLAY");
-        telemetry.update();
-    }
+            RobotFrame first = frames.get(0);
+            robot.initialize(hardwareMap, new Pose(first.x, first.y, first.heading));
+            robotInitialized = true;
+            robot.drive.configureAlliance(blueAlliance);
+            robot.vision.initialize(hardwareMap, first.aimPipeline);
 
-    @Override
-    public void start() {
-        if (!initialized) return;
-        Frame first = frames.get(0);
-        robot.setPose(poseOf(first));
-        robot.update();
-        robot.vision.start();
-        poseResetId = first.poseResetId;
-        controller.reset();
-        timer.reset();
-        running = true;
-    }
-
-    @Override
-    public void periodic() {
-        if (!running) {
-            addStatusTelemetry();
+            telemetry.addData("Replay file", recordingFile.getAbsolutePath());
+            telemetry.addData("Frames", frames.size());
+            telemetry.addData("Duration", "%.2f s", duration());
+            telemetry.addLine("Ready to replay");
             telemetry.update();
-            return;
+
+            waitForStart();
+            if (isStopRequested()) {
+                return;
+            }
+
+            // Force the same coordinate origin used at the beginning of recording.
+            robot.setPose(new Pose(first.x, first.y, first.heading));
+            robot.update();
+            robot.follower.startTeleopDrive(true);
+            robot.vision.start();
+
+            executeReplay();
+        } catch (Exception e) {
+            // An INIT failure must stay visible. Returning here before waitForStart() makes
+            // the SDK replace the useful error with its "ended prematurely" warning.
+            try {
+                robot.stop();
+            } catch (RuntimeException stoppingFailure) {
+                e.addSuppressed(stoppingFailure);
+            }
+            RobotLog.ee("Replay", e, "Replay failed for %s", recordingFile);
+            String error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            while (!isStopRequested()) {
+                telemetry.addData("Replay", "BLOCKED - motors stopped");
+                telemetry.addData("Replay file", recordingFile);
+                telemetry.addData("Replay error", error);
+                // Also monitor PLAY while blocked; it must never start an invalid replay.
+                telemetry.addLine(isStarted()
+                        ? "Replay cannot run. Press STOP and fix the error above."
+                        : "INIT failed. Press STOP and fix the error above.");
+                telemetry.update();
+                sleep(100);
+            }
+        } finally {
+            stopRobotSafely();
         }
-        double now = timer.seconds();
-        if (now > duration()) {
-            // Stop all mechanisms immediately; do not wait for the Driver Station STOP button.
-            running = false;
-            completed = true;
-            robot.stop();
-            PoseStorage.savePose(robot.follower.getPose());
-            addStatusTelemetry();
-            telemetry.update();
-            return;
-        }
-        double timestamp = frames.get(0).timestamp + now;
-        while (frameIndex + 1 < frames.size()
-                && frames.get(frameIndex + 1).timestamp <= timestamp) {
-            Frame next = frames.get(++frameIndex);
-            if (next.poseResetId != poseResetId) {
-                // Reproduce L3 as a coordinate reset, even when a slow loop skips frames.
-                robot.setPose(poseOf(next));
-                poseResetId = next.poseResetId;
-                controller.reset();
+    }
+
+    private void executeReplay() {
+        RobotFrame first = frames.get(0);
+        double firstTimestamp = first.timestamp;
+        double replayDuration = duration();
+        int frameIndex = 0;
+
+        double previousLoopTime = 0;
+        double previousHeading = first.heading;
+        double filteredVelocityErrorX = 0;
+        double filteredVelocityErrorY = 0;
+        double filteredOmegaError = 0;
+        double peakPositionError = 0;
+        double meanPositionError = 0;
+        double ticks = 0;
+
+        replayTimer.reset();
+
+        while (opModeIsActive() && replayTimer.seconds() <= replayDuration) {
+            double now = replayTimer.seconds();
+            double targetTimestamp = firstTimestamp + now;
+
+            while (frameIndex < frames.size() - 1
+                    && frames.get(frameIndex + 1).timestamp <= targetTimestamp) {
+                RobotFrame next = frames.get(++frameIndex);
+                if (next.poseReset) {
+                    robot.setPose(new Pose(next.x, next.y, next.heading));
+                    previousLoopTime = 0;
+                    filteredVelocityErrorX = 0;
+                    filteredVelocityErrorY = 0;
+                    filteredOmegaError = 0;
+                }
+            }
+
+            RobotFrame a = frames.get(frameIndex);
+            RobotFrame b = frameIndex + 1 < frames.size()
+                    ? frames.get(frameIndex + 1) : a;
+            double interpolation = b.poseReset ? 0 : interpolationAmount(a, b, targetTimestamp);
+
+            double targetX = lerp(a.x, b.x, interpolation);
+            double targetY = lerp(a.y, b.y, interpolation);
+            double targetHeading = lerpAngle(a.heading, b.heading, interpolation);
+            double targetVelocityX = lerp(a.velocityX, b.velocityX, interpolation);
+            double targetVelocityY = lerp(a.velocityY, b.velocityY, interpolation);
+            double targetOmega = lerp(a.angularVelocity, b.angularVelocity, interpolation);
+
+            refreshVoltage(now);
+            double recordedVoltage = lerp(a.voltage, b.voltage, interpolation);
+            double voltageScale = currentVoltage > 1 && recordedVoltage > 1
+                    ? Range.clip(recordedVoltage / currentVoltage,
+                    MIN_VOLTAGE_SCALE, MAX_VOLTAGE_SCALE)
+                    : 1.0;
+
+            DriveCommand feedforward = interpolateFeedforward(a, b, interpolation);
+            // Field-centric input and target lock only affect manual driving.
+            // Path/pose feedforward is already in the robot coordinate frame.
+            boolean manualDrive = a.driveMode == MODE_MANUAL;
+            boolean fieldCentric = manualDrive && a.fieldCentric;
+            boolean aimingAtTarget = manualDrive && a.aimingAtTarget;
+            feedforward.scale(voltageScale);
+
+            Pose currentPose = robot.follower.getPose();
+            Vector currentVelocity = robot.follower.getVelocity();
+            double currentHeading = currentPose.getHeading();
+            double dt = previousLoopTime > 0
+                    ? Math.max(now - previousLoopTime, MIN_DT) : MIN_DT;
+
+            double errorFieldX = targetX - currentPose.getX();
+            double errorFieldY = targetY - currentPose.getY();
+            double headingError = normalizeAngle(targetHeading - currentHeading);
+            double velocityErrorX = targetVelocityX - currentVelocity.getXComponent();
+            double velocityErrorY = targetVelocityY - currentVelocity.getYComponent();
+            double actualOmega = previousLoopTime > 0
+                    ? normalizeAngle(currentHeading - previousHeading) / dt
+                    : targetOmega;
+            double omegaError = targetOmega - actualOmega;
+
+            filteredVelocityErrorX += VELOCITY_FILTER_ALPHA
+                    * (velocityErrorX - filteredVelocityErrorX);
+            filteredVelocityErrorY += VELOCITY_FILTER_ALPHA
+                    * (velocityErrorY - filteredVelocityErrorY);
+            filteredOmegaError += VELOCITY_FILTER_ALPHA
+                    * (omegaError - filteredOmegaError);
+
+            double correctionFieldX = errorFieldX * TRANSLATION_KP
+                    + filteredVelocityErrorX * TRANSLATION_KD;
+            double correctionFieldY = errorFieldY * TRANSLATION_KP
+                    + filteredVelocityErrorY * TRANSLATION_KD;
+
+            double cosHeading = Math.cos(currentHeading);
+            double sinHeading = Math.sin(currentHeading);
+            double correctionForward = cosHeading * correctionFieldX
+                    + sinHeading * correctionFieldY;
+            double correctionStrafe = -sinHeading * correctionFieldX
+                    + cosHeading * correctionFieldY;
+
+            double correctionMagnitude = Math.hypot(
+                    correctionForward, correctionStrafe);
+            if (correctionMagnitude > MAX_TRANSLATION_CORRECTION) {
+                double correctionScale = MAX_TRANSLATION_CORRECTION
+                        / correctionMagnitude;
+                correctionForward *= correctionScale;
+                correctionStrafe *= correctionScale;
+                correctionFieldX *= correctionScale;
+                correctionFieldY *= correctionScale;
+            }
+
+            double correctionTurn = Range.clip(
+                    headingError * ROTATION_KP
+                            + filteredOmegaError * ROTATION_KD,
+                    -MAX_ROTATION_CORRECTION, MAX_ROTATION_CORRECTION);
+
+            double commandForward = feedforward.forward
+                    + (fieldCentric ? correctionFieldX : correctionForward);
+            double commandStrafe = feedforward.strafe
+                    + (fieldCentric ? correctionFieldY : correctionStrafe);
+            if (aimingAtTarget) {
+                int pipeline = robot.drive.isUsingFirstAimTarget()
+                        ? (blueAlliance ? Constants.LIMELIGHT_BLUE_1_PIPELINE : Constants.LIMELIGHT_RED_1_PIPELINE)
+                        : (blueAlliance ? Constants.LIMELIGHT_BLUE_2_PIPELINE : Constants.LIMELIGHT_RED_2_PIPELINE);
+                robot.vision.selectPipeline(pipeline);
+                robot.drive.startAiming();
+            } else {
                 robot.drive.stopAiming();
+                robot.vision.selectPipeline(a.aimPipeline);
+            }
+            double commandTurn = Range.clip(
+                    (aimingAtTarget ? robot.drive.getAimTurn() : feedforward.turn) + correctionTurn,
+                    -1, 1);
+            double translationMagnitude = Math.hypot(
+                    commandForward, commandStrafe);
+            if (translationMagnitude > 1) {
+                commandForward /= translationMagnitude;
+                commandStrafe /= translationMagnitude;
+            }
+
+            robot.intake.setPower(a.intakePower);
+            robot.transfer.setPower(a.transferPower);
+            robot.follower.setTeleOpDrive(
+                    commandForward, commandStrafe, commandTurn, !fieldCentric);
+            robot.update();
+            ticks++;
+
+            double positionError = Math.hypot(errorFieldX, errorFieldY);
+            meanPositionError += positionError;
+            peakPositionError = Math.max(peakPositionError, positionError);
+            telemetry.addData("Time", "%.2f / %.2f s", now, replayDuration);
+            telemetry.addData("Frame", "%d / %d", frameIndex + 1, frames.size());
+            telemetry.addData("Recorded mode", modeName(a.driveMode));
+            telemetry.addData("Drive frame", fieldCentric ? "Field centric" : "Robot centric");
+            telemetry.addData("Target lock", targetLockName(a));
+            telemetry.addData("Pose reset", a.poseReset);
+            telemetry.addData("Intake / transfer", "%.2f / %.2f", a.intakePower, a.transferPower);
+            telemetry.addData("Position error", "%.2f in", positionError);
+            telemetry.addData("Mean error", "%.2f in", meanPositionError / ticks);
+            telemetry.addData("Peak error", "%.2f in", peakPositionError);
+            telemetry.addData("Heading error", "%.1f deg",
+                    Math.toDegrees(Math.abs(headingError)));
+            telemetry.addData("Feedforward", "%.2f  %.2f  %.2f",
+                    feedforward.forward, feedforward.strafe, feedforward.turn);
+            telemetry.addData("Command", "%.2f  %.2f  %.2f",
+                    commandForward, commandStrafe, commandTurn);
+            telemetry.update();
+
+            previousHeading = currentHeading;
+            previousLoopTime = now;
+            idle();
+        }
+    }
+
+    static List<RobotFrame> loadRecording(File file, boolean expectedBlue, boolean transferEnabled)
+            throws IOException {
+        List<RobotFrame> frames = new ArrayList<>();
+        if (!file.isFile()) {
+            throw new IOException("Recording not found: " + file.getAbsolutePath());
+        }
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String header = reader.readLine();
+            if (header == null) {
+                throw new IOException("Recording is empty");
+            }
+
+            if (!RecordingFormat.HEADER.equals(header)) {
+                throw new IOException("Unsupported CSV format; record again with Biobuzz Recorder");
+            }
+
+            String line;
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (line.trim().isEmpty()) {
+                    continue;
+                }
+
+                String[] values = line.split(",", -1);
+                if (values.length != CSV_COLUMN_COUNT) {
+                    throw new IOException("Invalid column count on CSV line " + lineNumber);
+                }
+
+                try {
+                    RobotFrame frame = new RobotFrame(values);
+                    validateFrame(frame, lineNumber, frames);
+                    if (frame.aimingAtBlue != expectedBlue) {
+                        throw new IOException("Recording belongs to the other alliance, line " + lineNumber);
+                    }
+                    if (!transferEnabled && frame.transferPower != 0) {
+                        throw new IOException("Recording requires the transfer motor; record again with transfer disabled");
+                    }
+                    frames.add(frame);
+                } catch (NumberFormatException e) {
+                    throw new IOException("Invalid number on CSV line " + lineNumber, e);
+                }
             }
         }
-        Frame a = frames.get(frameIndex);
-        Frame b = frames.get(Math.min(frameIndex + 1, frames.size() - 1));
-        double aimTurn = Double.NaN;
-        if (a.aiming) {
-            int pipeline = robot.drive.isUsingFirstAimTarget()
-                    ? alliance.basket1Pipeline : alliance.basket2Pipeline;
-            robot.vision.selectPipeline(pipeline);
-            if (robot.drive.startAiming()) aimTurn = robot.drive.getAimTurn();
-        } else {
-            robot.drive.stopAiming();
-            robot.vision.selectPipeline(a.aimPipeline);
-        }
-        if (now - lastVoltageTime >= 0.10) {
-            currentVoltage = voltageSensor.getVoltage();
-            lastVoltageTime = now;
-        }
-        Pose pose = robot.follower.getPose();
-        Vector velocity = robot.follower.getVelocity();
-        double omega = pinpoint.getHeadingVelocity(UnnormalizedAngleUnit.RADIANS);
-        ReplayController.Command command = controller.calculate(a, b, timestamp,
-                pose.getX(), pose.getY(), pose.getHeading(),
-                velocity.getXComponent(), velocity.getYComponent(), omega, currentVoltage, aimTurn);
 
-        robot.intake.setPower(a.intakePower);
-        robot.transfer.setPower(a.transferPower);
-        robot.follower.setTeleOpDrive(command.forward, command.strafe, command.turn, !a.fieldCentric);
-        robot.update();
-        totalError += command.positionError;
-        peakError = Math.max(peakError, command.positionError);
-        ticks++;
-        telemetry.addData("Replay", "%s | %.2f / %.2f s", alliance, now, duration());
-        telemetry.addData("Frame", "%d / %d", frameIndex + 1, frames.size());
-        telemetry.addData("Drive frame", a.fieldCentric ? "Field centric" : "Robot centric");
-        telemetry.addData("Autoaim", a.aiming ? "ON" : "OFF");
-        telemetry.addData("Pipeline", robot.vision.getSelectedPipeline());
-        telemetry.addData("Intake / transfer", "%.2f / %.2f", a.intakePower, a.transferPower);
-        telemetry.addData("Position error", "%.2f in", command.positionError);
-        telemetry.addData("Mean / peak error", "%.2f / %.2f in", totalError / ticks, peakError);
-        telemetry.addData("Heading error", "%.1f deg", Math.toDegrees(command.headingError));
-        telemetry.addData("Command", "%.2f / %.2f / %.2f",
-                command.forward, command.strafe, command.turn);
-        telemetry.update();
-        Pose updatedPose = robot.follower.getPose();
-        PedroFollowerOdometryLogger.log("follower", updatedPose.getX(), updatedPose.getY(),
-                updatedPose.getHeading());
-        Logger.recordOutput("Replay/PositionError", command.positionError);
-        Logger.recordOutput("Replay/HeadingError", command.headingError);
-        Logger.recordOutput("Replay/IntakePower", a.intakePower);
-        Logger.recordOutput("Replay/TransferPower", a.transferPower);
+        if (frames.size() < 2) {
+            throw new IOException("Recording needs at least two frames; press PLAY in Recorder first");
+        }
+        return frames;
     }
 
-    private void addStatusTelemetry() {
-        telemetry.addData("Alliance", alliance);
-        telemetry.addData("Replay file", file.getAbsolutePath());
-        if (error != null) {
-            telemetry.addData("Replay error", error);
-            return;
+    private static void validateFrame(RobotFrame frame, int lineNumber, List<RobotFrame> frames)
+            throws IOException {
+        if (!Double.isFinite(frame.timestamp)
+                || !Double.isFinite(frame.x)
+                || !Double.isFinite(frame.y)
+                || !Double.isFinite(frame.heading)) {
+            throw new IOException("Non-finite value on CSV line " + lineNumber);
         }
-        telemetry.addData("Replay", completed ? "COMPLETE - motors stopped" : "READY");
-        telemetry.addData("Frames", frames.size());
-        telemetry.addData("Duration", "%.2f s", duration());
-        Frame first = frames.get(0);
-        telemetry.addData("Recorded start", "(%.2f, %.2f, %.1f deg)",
-                first.x, first.y, Math.toDegrees(first.heading));
+        if (!frames.isEmpty()
+                && frame.timestamp < frames.get(frames.size() - 1).timestamp) {
+            throw new IOException("Timestamps go backwards on CSV line " + lineNumber);
+        }
+        if (frame.driveMode < MODE_MANUAL || frame.driveMode > MODE_HOLDING_POSE) {
+            throw new IOException("Invalid DriveMode on CSV line " + lineNumber);
+        }
+    }
+
+    private DriveCommand interpolateFeedforward(
+            RobotFrame a, RobotFrame b, double amount) {
+        DriveCommand commandA = a.feedforward();
+        if (a.driveMode != b.driveMode
+                || a.fieldCentric != b.fieldCentric
+                || a.aimingAtTarget != b.aimingAtTarget
+                || a.aimingAtBlue != b.aimingAtBlue || b.poseReset) {
+            return commandA;
+        }
+
+        DriveCommand commandB = b.feedforward();
+        return new DriveCommand(
+                lerp(commandA.forward, commandB.forward, amount),
+                lerp(commandA.strafe, commandB.strafe, amount),
+                lerp(commandA.turn, commandB.turn, amount));
+    }
+
+    private double interpolationAmount(
+            RobotFrame a, RobotFrame b, double targetTimestamp) {
+        double frameDuration = b.timestamp - a.timestamp;
+        if (frameDuration <= 0) {
+            return 0;
+        }
+        return Range.clip(
+                (targetTimestamp - a.timestamp) / frameDuration, 0, 1);
+    }
+
+    private void refreshVoltage(double now) {
+        if (now - lastVoltageReadTime >= VOLTAGE_REFRESH_SEC) {
+            currentVoltage = hardwareMap.voltageSensor.iterator().next().getVoltage();
+            lastVoltageReadTime = now;
+        }
+    }
+
+    private void stopRobotSafely() {
+        try {
+            robot.stop();
+        } finally {
+            try {
+                if (robotInitialized && robot.follower != null) {
+                    PoseStorage.savePose(robot.follower.getPose());
+                }
+            } finally {
+                robot.release();
+            }
+        }
     }
 
     private double duration() {
-        return frames.get(frames.size() - 1).timestamp - frames.get(0).timestamp;
+        return frames.get(frames.size() - 1).timestamp
+                - frames.get(0).timestamp;
     }
 
-    private static Pose poseOf(Frame frame) {
-        return new Pose(frame.x, frame.y, frame.heading);
+    private static String modeName(int driveMode) {
+        if (driveMode == MODE_MANUAL) return "Manual";
+        if (driveMode == MODE_FOLLOWING_PATH) return "Following path";
+        return "Holding pose";
     }
 
-    private static OpModeHook stopRobotOnExit(KronBot robot) {
-        return new OpModeHook() {
-            @Override
-            public void afterEnd() {
-                try {
-                    robot.stop();
-                } finally {
-                    try {
-                        if (robot.follower != null) PoseStorage.savePose(robot.follower.getPose());
-                    } finally {
-                        robot.release();
-                    }
+    private static String targetLockName(RobotFrame frame) {
+        if (!frame.aimingAtTarget) return "Off";
+        return frame.aimingAtBlue ? "Blue" : "Red";
+    }
+
+    private static double lerp(double a, double b, double amount) {
+        return a + (b - a) * amount;
+    }
+
+    private static double lerpAngle(double a, double b, double amount) {
+        return normalizeAngle(a + normalizeAngle(b - a) * amount);
+    }
+
+    private static double normalizeAngle(double angle) {
+        while (angle > Math.PI) angle -= 2 * Math.PI;
+        while (angle < -Math.PI) angle += 2 * Math.PI;
+        return angle;
+    }
+
+    private static final class DriveCommand {
+        double forward;
+        double strafe;
+        double turn;
+
+        DriveCommand(double forward, double strafe, double turn) {
+            this.forward = forward;
+            this.strafe = strafe;
+            this.turn = turn;
+        }
+
+        void scale(double amount) {
+            forward = Range.clip(forward * amount, -1, 1);
+            strafe = Range.clip(strafe * amount, -1, 1);
+            turn = Range.clip(turn * amount, -1, 1);
+        }
+    }
+
+    static final class RobotFrame {
+        final double timestamp;
+        final double leftRearPower;
+        final double rightRearPower;
+        final double leftFrontPower;
+        final double rightFrontPower;
+        final double x;
+        final double y;
+        final double heading;
+        final double voltage;
+        final double driveForward;
+        final double driveStrafe;
+        final double driveTurn;
+        final int driveMode;
+        final boolean aPressed;
+        final boolean bPressed;
+        final double velocityX;
+        final double velocityY;
+        final double angularVelocity;
+        final boolean fieldCentric;
+        final boolean aimingAtTarget;
+        final boolean aimingAtBlue;
+        final double intakePower;
+        final double transferPower;
+        final int aimPipeline;
+        final boolean poseReset;
+
+        RobotFrame(String[] values) {
+            for (String value : values) {
+                if (!Double.isFinite(Double.parseDouble(value))) {
+                    throw new NumberFormatException("Non-finite CSV value");
                 }
             }
-        };
+            timestamp = Double.parseDouble(values[0]);
+            leftRearPower = Double.parseDouble(values[1]);
+            rightRearPower = Double.parseDouble(values[2]);
+            leftFrontPower = Double.parseDouble(values[3]);
+            rightFrontPower = Double.parseDouble(values[4]);
+            x = Double.parseDouble(values[5]);
+            y = Double.parseDouble(values[6]);
+            heading = Double.parseDouble(values[7]);
+            voltage = Double.parseDouble(values[8]);
+            driveForward = Double.parseDouble(values[9]);
+            driveStrafe = Double.parseDouble(values[10]);
+            driveTurn = Double.parseDouble(values[11]);
+            driveMode = Integer.parseInt(values[12]);
+            aPressed = parseBoolean(values[13]);
+            bPressed = parseBoolean(values[14]);
+            velocityX = Double.parseDouble(values[15]);
+            velocityY = Double.parseDouble(values[16]);
+            angularVelocity = Double.parseDouble(values[17]);
+            fieldCentric = parseBoolean(values[18]);
+            aimingAtTarget = parseBoolean(values[19]);
+            aimingAtBlue = parseBoolean(values[20]);
+            intakePower = Double.parseDouble(values[21]);
+            transferPower = Double.parseDouble(values[22]);
+            aimPipeline = Integer.parseInt(values[23]);
+            poseReset = parseBoolean(values[24]);
+            if (timestamp < 0 || voltage <= 1 || Math.abs(intakePower) > 1
+                    || Math.abs(transferPower) > 1 || aimPipeline < 0 || aimPipeline > 9) {
+                throw new NumberFormatException("Invalid time, voltage, mechanism power, or pipeline");
+            }
+        }
+
+        DriveCommand feedforward() {
+            if (driveMode == MODE_MANUAL) {
+                return new DriveCommand(driveForward, driveStrafe, driveTurn);
+            }
+
+            // Path-following and holding rows have zero joystick commands.
+            // Recover their drive feedforward from the four recorded powers.
+            return new DriveCommand(
+                    (leftFrontPower + rightFrontPower
+                            + leftRearPower + rightRearPower) / 4.0,
+                    (leftFrontPower - rightFrontPower
+                            - leftRearPower + rightRearPower) / 4.0,
+                    (leftFrontPower - rightFrontPower
+                            + leftRearPower - rightRearPower) / 4.0);
+        }
+
+        private static boolean parseBoolean(String value) {
+            return "1".equals(value) || "true".equalsIgnoreCase(value);
+        }
     }
 }

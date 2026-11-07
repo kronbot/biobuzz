@@ -1,15 +1,14 @@
 package org.firstinspires.ftc.teamcode.opmodes.autonomous;
 
-import org.firstinspires.ftc.teamcode.KronBot;
-import org.firstinspires.ftc.teamcode.utils.Alliance;
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+
 import org.firstinspires.ftc.teamcode.utils.Constants;
+import org.psilynx.psikit.ftc.autolog.PsiKitNoAutoLog;
 
-import dev.nextftc.robot.opmode.NextAutonomous;
-
-@NextAutonomous(name = "Replay - Blue Alliance", group = Constants.MAIN_GROUP,
-        preselectTeleop = "Driving - Blue Alliance")
+@PsiKitNoAutoLog
+@Autonomous(name = "Replay - Blue Alliance", group = Constants.MAIN_GROUP)
 public final class BlueReplayOp extends ReplayOp {
-    public BlueReplayOp(KronBot robot) {
-        super(robot, Alliance.BLUE);
+    public BlueReplayOp() {
+        super(true);
     }
 }

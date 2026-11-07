@@ -62,6 +62,8 @@ public final class Controls {
         public boolean justPressed() {
             return current && !previous;
         }
+
+        public boolean isPressed(){return current;}
     }
 
     public static final class Trigger {

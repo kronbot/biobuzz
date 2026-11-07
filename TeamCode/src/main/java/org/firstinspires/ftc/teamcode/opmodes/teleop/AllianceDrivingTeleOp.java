@@ -1,15 +1,14 @@
 package org.firstinspires.ftc.teamcode.opmodes.teleop;
 
 import com.pedropathing.geometry.Pose;
+import com.qualcomm.robotcore.util.RobotLog;
 
 import org.firstinspires.ftc.teamcode.KronBot;
 import org.firstinspires.ftc.teamcode.mechanisms.LimelightController;
-import org.firstinspires.ftc.teamcode.utils.Alliance;
 import org.firstinspires.ftc.teamcode.utils.Constants;
 import org.firstinspires.ftc.teamcode.utils.Controls;
 import org.firstinspires.ftc.teamcode.utils.PsiKitNextBridge;
 import org.firstinspires.ftc.teamcode.utils.PoseStorage;
-import org.firstinspires.ftc.teamcode.utils.RecordingSession;
 import org.psilynx.psikit.ftc.PedroFollowerOdometryLogger;
 
 import org.psilynx.psikit.core.Logger;
@@ -25,44 +24,59 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
     }
 
     private final String allianceName;
-    private final KronBot robot;
-    private final Controls controls;
+    protected final KronBot robot;
+    protected final Controls controls;
+    protected final boolean blueAlliance;
     private Pose selectedStartPose;
     private final int basket1Pipeline;
     private final int basket2Pipeline;
-    private final RecordingSession recording;
+    private boolean initAttempted;
+    private boolean initialized;
+    private boolean stopped;
+    private String initializationError;
 
-    protected AllianceDrivingTeleOp(KronBot robot, Alliance alliance,
-                                    RecordingSession recording) {
-        super(robot, stopRobotOnExit(robot, recording), new PsiKitNextBridge.Hook());
+    protected AllianceDrivingTeleOp(KronBot robot, boolean blueAlliance) {
+        this(robot, blueAlliance, new ExitHook());
+    }
+
+    private AllianceDrivingTeleOp(KronBot robot, boolean blueAlliance, ExitHook exitHook) {
+        super(robot, exitHook, new PsiKitNextBridge.Hook());
+        exitHook.opMode = this;
         this.robot = robot;
-        this.allianceName = alliance.name();
-        this.basket1Pipeline = alliance.basket1Pipeline;
-        this.basket2Pipeline = alliance.basket2Pipeline;
-        this.recording = recording;
+        this.blueAlliance = blueAlliance;
+        allianceName = blueAlliance ? "BLUE" : "RED";
+        basket1Pipeline = blueAlliance ? Constants.LIMELIGHT_BLUE_1_PIPELINE
+                : Constants.LIMELIGHT_RED_1_PIPELINE;
+        basket2Pipeline = blueAlliance ? Constants.LIMELIGHT_BLUE_2_PIPELINE
+                : Constants.LIMELIGHT_RED_2_PIPELINE;
         controls = new Controls(gamepad1);
         selectedStartPose = leftStartPose();
+    }
 
+    private void initializeRobot() {
+        if (initAttempted) return;
+        initAttempted = true;
         try {
             robot.initialize(hardwareMap, selectedStartPose);
-            alliance.configureDrive(robot.drive);
+            robot.drive.configureAlliance(blueAlliance);
             robot.vision.initialize(hardwareMap, basket1Pipeline);
-            if (recording != null) {
-                recording.initialize(hardwareMap);
-            }
-            addInitTelemetry();
-        } catch (RuntimeException | Error initializationFailure) {
-            try {
-                robot.release();
-            } catch (RuntimeException | Error cleanupFailure) {
-                initializationFailure.addSuppressed(cleanupFailure);
-            }
-            throw initializationFailure;
+            onRobotInit();
+            initialized = true;
+        } catch (RuntimeException failure) {
+            initializationError = failure.getMessage() == null
+                    ? failure.getClass().getSimpleName() : failure.getMessage();
+            RobotLog.ee("TeleOp", failure, "Robot initialization failed");
+            stopRobot();
         }
     }
 
     @Override
     public void disabledPeriodic() {
+        initializeRobot();
+        if (!initialized) {
+            showInitializationError();
+            return;
+        }
         controls.update();
         if (controls.dpadLeft.justPressed()) {
             selectedStartPose = leftStartPose();
@@ -82,28 +96,34 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
 
     @Override
     public void start() {
-        robot.vision.start();
-        if (recording != null) {
-            recording.start();
+        initializeRobot();
+        if (!initialized) {
+            showInitializationError();
+            return;
         }
+        robot.vision.start();
+        onRobotStart();
     }
 
     @Override
     public void periodic() {
+        if (!initialized) {
+            showInitializationError();
+            return;
+        }
         controls.update();
         handleDrivingButtons();
         updateAutoAim();
         handlePoseReset();
-        handleIntakeButtons();
+        handleIntakeAndTransferButtons();
 
         updateAimPipeline();
         robot.drive.runManual(controls);
         robot.update();
-        if (recording != null) {
-            recording.update();
-        }
+        onRobotUpdated();
         logPsiKit();
         addDriverTelemetry();
+        onRobotLoop();
         telemetry.update();
     }
 
@@ -125,9 +145,6 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         if (controls.leftStickButton.justPressed()) {
             robot.setPose(robot.follower.getPose().getX() < 72.0
                     ? leftStartPose() : rightStartPose());
-            if (recording != null) {
-                recording.markPoseReset();
-            }
         }
     }
 
@@ -142,46 +159,51 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         robot.vision.selectPipeline(pipeline);
     }
 
-    private void handleIntakeButtons() {
-        if (robot.intake == null) {
-            return;
-        }
-        if (controls.rightBumper.justPressed()) {
+    private void handleIntakeAndTransferButtons() {
+        if (controls.rightBumper.isPressed()) {
             robot.intake.turnOn(false);
-        }
-        else if (controls.leftBumper.justPressed()) {
+            robot.transfer.turnOn(false);
+        } else if (controls.leftBumper.isPressed()) {
             robot.intake.turnOn(true);
-        }
-        else {
+            robot.transfer.turnOn(true);
+        } else {
             robot.intake.turnOff();
+            robot.transfer.turnOff();
         }
     }
 
-    private static OpModeHook stopRobotOnExit(KronBot robot, RecordingSession recording) {
-        return new OpModeHook() {
-            @Override
-            public void afterEnd() {
+    private void stopRobot() {
+        if (stopped) return;
+        stopped = true;
+        try {
+            robot.stop();
+        } finally {
+            try {
+                onRobotStopping();
+            } finally {
                 try {
-                    // Stop motors before flushing the recording or saving the pose to disk.
-                    robot.stop();
+                    if (robot.follower != null) PoseStorage.savePose(robot.follower.getPose());
                 } finally {
-                    try {
-                        if (recording != null) {
-                            recording.close();
-                        }
-                    } finally {
-                        try {
-                            if (robot.follower != null) {
-                                PoseStorage.savePose(robot.follower.getPose());
-                            }
-                        } finally {
-                            robot.release();
-                        }
-                    }
+                    robot.release();
                 }
             }
-        };
+        }
     }
+
+    // NextFTC guarantees afterEnd even if a loop fails. The recorder only closes its file here.
+    private static final class ExitHook implements OpModeHook {
+        private AllianceDrivingTeleOp opMode;
+
+        @Override public void afterEnd() {
+            opMode.stopRobot();
+        }
+    }
+
+    protected void onRobotInit() {}
+    protected void onRobotStart() {}
+    protected void onRobotUpdated() {}
+    protected void onRobotLoop() {}
+    protected void onRobotStopping() {}
 
     private void logPsiKit() {
         if (robot.follower != null) {
@@ -196,9 +218,8 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         Logger.recordOutput("Drive/Cmd/RightStickX", controls.rightStickX);
         Logger.recordOutput("Vision/Tx", LimelightController.getAimTx());
         Logger.recordOutput("Vision/SeesTag", LimelightController.seesArpilTag());
-        if (robot.intake != null) {
-            Logger.recordOutput("Intake/On", robot.intake.isOn());
-        }
+        Logger.recordOutput("Intake/On", robot.intake.isOn());
+        Logger.recordOutput("Transfer/On", robot.transfer.isOn());
     }
 
     private void addInitTelemetry() {
@@ -208,27 +229,35 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
                 selectedStartPose.getX(), selectedStartPose.getY(),
                 Math.toDegrees(selectedStartPose.getHeading()));
         telemetry.addLine("INIT: D-pad left/right selects the physical starting side, down selects saved pose");
+        if (!robot.transfer.isAvailable()) {
+            telemetry.addLine("Transfer disabled: mechanism not installed (TRANSFER_ENABLED=false)");
+        }
         robot.drive.telemetry(telemetry);
         if (!robot.drive.isSelectedAimTargetConfigured()) {
             telemetry.addLine("WARNING: enter this alliance's basket coordinates in Constants");
         }
-        if (recording != null) {
-            recording.telemetry(telemetry);
-        }
+        onRobotLoop();
+        telemetry.update();
+    }
+
+    private void showInitializationError() {
+        telemetry.addData("Alliance", allianceName);
+        telemetry.addData("Status", "INIT FAILED - driving blocked");
+        telemetry.addData("Initialization error", initializationError);
+        telemetry.addLine("Fix the active robot configuration, press STOP, then INIT again");
         telemetry.update();
     }
 
     private void addDriverTelemetry() {
         telemetry.addData("Alliance", allianceName);
         robot.drive.telemetry(telemetry);
-        if (robot.intake != null) {
-            robot.intake.telemetry(telemetry);
-        }
+        robot.intake.telemetry(telemetry);
+        robot.transfer.telemetry(telemetry);
         robot.vision.telemetry(telemetry);
-        if (recording != null) {
-            recording.telemetry(telemetry);
-        }
         telemetry.addLine("Triangle: field centric");
+        telemetry.addLine(robot.transfer.isAvailable()
+                ? "Hold R1: intake + transfer forward | Hold L1: reverse | Release: stop"
+                : "Hold R1: intake forward | Hold L1: reverse | Release: stop (transfer disabled)");
         telemetry.addLine("L2 > 50%: autoaim | Basket: automatic by Y | L3: reset pose");
         telemetry.addLine("Limelight pipeline follows the aim basket");
     }

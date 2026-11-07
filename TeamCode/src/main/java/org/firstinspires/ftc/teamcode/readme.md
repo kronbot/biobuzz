@@ -1,132 +1,87 @@
-## Autonomie record & replay — Biobuzz
+## Record & replay — Biobuzz
 
-Implementarea pornește de la recorderul și replay-ul din `FTC_TestRobot`, adaptate
-la `KronBot`, NextFTC, intake, transfer și autoaim-ul cu Limelight.
+Implementarea urmează structura din `FTC_TestRobot`:
 
-### OpMode-uri disponibile
+- `opmodes/teleop/RecorderOp.java`: moștenește clasa de condus, înregistrează direct
+  CSV-ul și închide writer-ul la oprire.
+- `opmodes/autonomous/ReplayOp.java`: `LinearOpMode` cu încărcare CSV, așteptare
+  PLAY, bucla de interpolare/corecție din referință și oprire în `finally`.
+- `utils/RecordingFormat.java`: antetul CSV, numele fișierelor și modurile de condus.
 
-Toate apar în grupul `KronBot`. Înregistrarea este un TeleOp, iar redarea este
-un Autonomous.
+Cele patru clase Blue/Red Recorder/Replay sunt doar puncte de intrare în Driver
+Station. Nu există `RecordingSession`, `ReplayController`, `Alliance`,
+`InitializationState` sau `InitializationDiagnostics`.
 
-| Alianță | TeleOp normal | Înregistrare | Autonomie | Fișier pe Control Hub |
-| --- | --- | --- | --- | --- |
-| Albastră | Driving - Blue Alliance | Recorder - Blue Alliance | Replay - Blue Alliance | `/sdcard/robot_recording_blue.csv` |
-| Roșie | Driving - Red Alliance | Recorder - Red Alliance | Replay - Red Alliance | `/sdcard/robot_recording_red.csv` |
+| Alianță | Înregistrare | Redare | Fișier pe Control Hub |
+| --- | --- | --- | --- |
+| Albastră | Recorder - Blue Alliance | Replay - Blue Alliance | `/sdcard/robot_recording_blue.csv` |
+| Roșie | Recorder - Red Alliance | Replay - Red Alliance | `/sdcard/robot_recording_red.csv` |
 
-`BlueRecorderOp` moștenește `BlueAllianceTeleOp`, iar `RedRecorderOp` moștenește
-`RedAllianceTeleOp`. Logica de condus este aceeași; recorderul adaugă salvarea
-datelor și telemetria înregistrării. Configurațiile de coșuri și pipeline-uri
-sunt comune în `utils/Alliance.java`, astfel încât TeleOp-ul și autonomia să
-folosească aceleași setări ale alianței.
+Directorul este `Constants.RECORDING_DIRECTORY`, implicit `/sdcard`. Numele sunt
+`RecordingFormat.BLUE_FILE_NAME` și `RED_FILE_NAME`. Ambele opmode-uri folosesc
+`RecordingFormat.file(...)` și afișează calea completă în telemetrie.
 
-### Cum înregistrezi și redai
+### Utilizare
 
-1. Așază robotul în poziția fizică de început și selectează recorderul alianței.
-2. În INIT, alege poziția ca în TeleOp: D-pad stânga/dreapta pentru partea de
-   start sau D-pad jos pentru ultima poziție salvată. INIT nu șterge înregistrarea
-   precedentă.
-3. Apasă PLAY și execută secvența dorită. Verifică `Recording: ACTIVE` și numărul
-   de cadre din telemetrie. Cronometrul înregistrării pornește la PLAY.
-4. Apasă STOP la sfârșitul secvenței. Motoarele se opresc, se închide fișierul
-   temporar și se salvează înregistrarea. Există o singură înregistrare pe alianță:
-   următoarea înregistrare salvată cu succes o înlocuiește pe cea anterioară.
-5. Pune robotul înapoi în **aceeași poziție fizică și aceeași orientare**.
-   Selectează replay-ul aceleiași alianțe. INIT afișează poziția înregistrată,
-   numărul de cadre și durata; un fișier lipsă sau invalid apare ca eroare.
-6. Apasă PLAY. Replay-ul setează originea odometriei la poziția primului cadru și
-   execută secvența. La sfârșitul duratei înregistrate, oprește automat deplasarea,
-   intake-ul și transferul. STOP întrerupe și el execuția. Poziția finală este
-   salvată pentru TeleOp, iar TeleOp-ul alianței este preselectat.
+1. Selectează recorderul alianței. La INIT se deschide direct CSV-ul final și se
+   scrie antetul, ca în referință. **INIT începe o înregistrare nouă și înlocuiește
+   fișierul anterior al aceleiași alianțe**, inclusiv dacă anulezi înainte de PLAY.
+2. Selectează poziția cu D-pad stânga/dreapta sau jos pentru ultima poziție salvată.
+3. Apasă PLAY și condu. Verifică `Recording: ACTIVE`, calea și numărul de cadre.
+   Eșantionarea țintește 20 ms; schimbările de mecanisme, autoaim, Triangle și L3
+   sunt salvate imediat. Bufferul este golit cel puțin o dată la 0,5 s.
+4. Apasă STOP. Writer-ul este închis și mesajul devine `SAVED` sau `FAILED`.
+   Fișierul există deja; nu se folosește `.tmp` și nu se redenumește nimic.
+5. Pune robotul în aceeași poziție fizică și orientare, apoi selectează replay-ul
+   aceleiași alianțe. Verifică numărul de cadre și durata, apoi apasă PLAY.
 
-Durata redată este durata integrală înregistrată; codul nu trunchiază fișierul
-automat. Pentru o secvență de maximum 30 s, încheie înregistrarea înainte de 30 s.
-Nu există oglindire automată a traseelor: fiecare alianță își folosește fișierul.
+Dacă încărcarea CSV-ului sau inițializarea eșuează, replay-ul oprește motoarele
+și păstrează pe ecran `Replay error` și calea fișierului până apeși STOP. PLAY nu
+pornește un replay invalid. Eroarea completă este scrisă și în log cu tag-ul
+`Replay`. Astfel, eroarea inițială nu mai este ascunsă de avertismentul SDK
+`ended prematurely ... not monitoring for the start condition`.
 
-### Comenzile recorderului
+Recorderul folosește exact comenzile TeleOp-ului corespunzător:
+Triangle schimbă referința de condus, L2 peste 50% ține autoaim-ul activ,
+R1/L1 țin intake-ul înainte/invers, iar eliberarea bumperelor îl oprește.
+Transferul urmează bumperele numai când este montat și activat.
+L3 resetează poziția; evenimentul este înregistrat și reprodus.
 
-| Comandă | Comportament, identic cu TeleOp-ul alianței |
-| --- | --- |
-| Stick stânga | Deplasare înainte/înapoi și lateral |
-| Stick dreapta, axa X | Rotire când autoaim-ul este oprit |
-| Triangle | Comută robot centric / field centric |
-| R1 ținut | Intake și transfer înainte |
-| L1 ținut | Intake și transfer invers; R1 are prioritate dacă ambele sunt apăsate |
-| Eliberarea bumperelor | Oprește intake-ul și transferul |
-| L2 peste 50% | Autoaim; coșul este ales automat după Y |
-| L3 | Resetează poziția ca în TeleOp; evenimentul este salvat și reprodus |
+### Adaptări față de FTC_TestRobot
 
-### Ce se salvează și cum funcționează replay-ul
+Primele 21 de coloane urmează formatul referinței. `AimingAtBlue` identifică
+alianța recorderului; comenzile A/B sunt păstrate ca date, fără să adauge funcții
+care nu există în TeleOp-ul Biobuzz. Sunt adăugate patru coloane:
+`IntakePower,TransferPower,AimPipeline,PoseReset`.
 
-Formatul CSV are 18 coloane, definite în `utils/RecordingFormat.java`:
+Replay-ul folosește aceeași interpolare și aceiași coeficienți inițiali P/D din
+referință; aceștia sunt declarați la începutul `ReplayOp.java`. Nu există un
+controler de replay separat. Autoaim-ul folosește direct `DriveController`, cu
+ținte după alianță, selecție automată după Y și Limelight cu revenire la odometrie.
 
-```text
-Time,X,Y,Heading,Voltage,DriveFwd,DriveStr,DriveTurn,VelX,VelY,AngularVelocity,FieldCentric,AimingAtTarget,AimPipeline,IntakePower,TransferPower,PoseResetId,Alliance
-```
+Pe robotul actual, `Constants.TRANSFER_ENABLED = false`, deoarece motorul nu este
+montat. Când îl montezi, configurează numele `transfer` și activează opțiunea
+înainte de INIT. Un CSV care comandă transferul este refuzat dacă acesta este
+oprit din configurația codului.
 
-Poziția este în inch, orientarea în radiani, vitezele în inch/s și rad/s, iar
-puterile sunt în intervalul [-1, 1]. Sunt salvate comenzile efectiv trimise
-de `DriveController`, după deadzone, viteza manuală și autoaim. Puterile
-intake-ului și transferului sunt salvate separat, inclusiv semnul și oprirea.
+Fișierele vechi de 18 coloane din implementarea anterioară trebuie reînregistrate;
+nu sunt interpretate ca noul format de 25 de coloane. Și traseele de 21 de coloane
+din FTC_TestRobot trebuie reînregistrate pentru mecanismele Biobuzz.
 
-Recorderul țintește un cadru la 20 ms, limitat de viteza reală a buclei robotului.
-Schimbările de putere a mecanismelor, autoaim, pipeline, referință de condus și
-resetările de poziție produc un cadru imediat, chiar dacă nu au trecut 20 ms.
-Fișierul este golit din buffer la aproximativ 0,5 s. Se scrie mai întâi în
-`robot_recording_<alianță>.csv.tmp`; fișierul final este înlocuit numai după
-închiderea cu succes. La o eroare de scriere, se păstrează CSV-ul final anterior.
-O oprire brutală a aplicației/alimentării poate lăsa fișierul `.tmp` nefinalizat.
+TeleOp-urile și recorderele păstrează NextFTC și PsiKit, deja folosite de proiect.
+Replay-ul are ciclul standard FTC `LinearOpMode`; bridge-ul PsiKit nu îl învelește.
+În replay, cache-ul hub-urilor este pus în AUTO, inclusiv după un TeleOp care a
+folosit cache MANUAL. Portul PsiKit rămâne 5801, separat de Limelight Proxy pe 5800.
 
-La replay, ceasul selectează cadrele relevante, iar poziția, viteza și orientarea
-sunt interpolate între ele. Orientarea folosește rotația cea mai scurtă când
-trece prin ±π. Stările mecanismelor sunt menținute până la momentul schimbării;
-nu sunt interpolate. Nici comenzile nu sunt interpolate peste schimbarea unei
-stări discrete. Resetările L3 schimbă coordonatele la momentul înregistrat;
-nu sunt interpretate ca deplasări fizice.
-
-Comanda de deplasare combină:
-
-- comanda înregistrată, ajustată după raportul dintre tensiunea înregistrată și
-  cea curentă; factorul este limitat implicit la 0,90–1,10;
-- corecția proporțională cu eroarea de poziție/orientare;
-- corecția proporțională cu eroarea de viteză, filtrată pentru a reduce zgomotul.
-
-Corecția de translație este limitată implicit la magnitudinea 0,35 în ambele
-referințe de condus; corecția de rotire este limitată la ±0,30. Vectorul final
-de translație este normalizat la maximum 1, iar rotirea este limitată la [-1, 1].
-
-Când cadrul cere autoaim, replay-ul folosește `DriveController.getAimTurn()`:
-același PID, aceleași coordonate ale coșurilor și aceeași alegere automată după Y
-ca TeleOp-ul. Pipeline-ul urmărește coșul curent. O detecție Limelight validă este
-folosită pentru țintire; altfel se folosește odometria. Astfel, țintirea este
-recalculată în timpul autonomiei, pe lângă urmărirea orientării înregistrate.
-
-CSV-urile vechi din `FTC_TestRobot` nu sunt compatibile: nu conțin stările
-mecanismelor noi și folosesc altă schemă de țintire. Înregistrează traseele din
-nou folosind recorderele Biobuzz. Încărcarea verifică antetul, toate valorile
-numerice, limitele puterilor, alianța, pipeline-urile, ordinea timpilor și
-secvența resetărilor înainte de inițializarea robotului pentru replay.
-
-### Reglare și verificare
-
-Coeficienții `REPLAY_*` se află în `utils/Constants.java` și sunt disponibili în
-Panels. Valorile inițiale sunt cele din proiectul de referință; trebuie validate
-pe șasiul nou. `REPLAY_TRANSLATION_KP/KD` corectează poziția și viteza liniară,
-iar `REPLAY_ROTATION_KP/KD` corectează orientarea și viteza unghiulară.
-Telemetria replay-ului afișează eroarea instantanee, medie și maximă de poziție,
-eroarea de orientare și comenzile finale. PsiKit păstrează și erorile de replay.
-
-Pentru prima probă pe robot, înregistrează o secvență scurtă cu mers înainte,
-mers lateral, rotire, intake înainte/invers și eliberarea bumperelor. Testează
-apoi separat autoaim-ul și trecerea dintre cele două coșuri. Păstrează aceeași
-poziție de start și verifică odometria înainte de reglarea coeficienților.
-
-Testele de pe calculator verifică schema CSV, datele invalide, tranzițiile,
-unghiurile, transformarea coordonatelor, limitele corecției și o simulare
-simplificată de urmărire. Ele nu măsoară precizia mecanică pe teren.
+### Verificare
 
 ```sh
 ./gradlew :TeamCode:testDebugUnitTest :TeamCode:assembleDebug
 ```
+
+Testele verifică citirea fișierelor reale, formatul, ordinea cadrelor, datele
+invalide, alegerea alianței și transferul opțional. Precizia pe teren se verifică
+pe robot; compilarea și testele JVM nu pot confirma odometria sau alunecarea.
 
 ## TeamCode Module
 

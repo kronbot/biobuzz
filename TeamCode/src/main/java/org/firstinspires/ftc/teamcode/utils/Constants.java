@@ -6,6 +6,8 @@ import com.bylazar.configurables.annotations.Configurable;
 public final class Constants {
     public static final String MAIN_GROUP = "KronBot";
 
+    public static final String RECORDING_DIRECTORY = "/sdcard";
+
     public static double CONTROLLER_DEADZONE = 0.05;
     public static double MANUAL_SPEED = 1.0;
     public static double PATH_MAX_POWER = 0.8;
@@ -39,18 +41,11 @@ public final class Constants {
     public static double CENTER_Y = 72.0;
     public static double CENTER_HEADING_DEG = 90.0;
 
-    public static double INTAKE_POWER = 0.3;
-
-    // Starting values from FTC_TestRobot; tune on the new chassis using replay telemetry.
-    public static double REPLAY_TRANSLATION_KP = 0.022;
-    public static double REPLAY_TRANSLATION_KD = 0.013;
-    public static double REPLAY_ROTATION_KP = 0.30;
-    public static double REPLAY_ROTATION_KD = 0.08;
-    public static double REPLAY_VELOCITY_FILTER_ALPHA = 0.25;
-    public static double REPLAY_MAX_TRANSLATION_CORRECTION = 0.35;
-    public static double REPLAY_MAX_ROTATION_CORRECTION = 0.30;
-    public static double REPLAY_MIN_VOLTAGE_SCALE = 0.90;
-    public static double REPLAY_MAX_VOLTAGE_SCALE = 1.10;
+    public static double INTAKE_POWER = 1;
+    // The transfer is not installed on the current robot. Sampled at each INIT.
+    // Enable only after adding a DcMotorEx named "transfer" to the active configuration.
+    public static boolean TRANSFER_ENABLED = false;
+    public static double TRANSFER_POWER = 1;
 
     public static final int LIMELIGHT_RED_1_PIPELINE = 1;
 
