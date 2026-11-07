@@ -11,6 +11,7 @@ import org.firstinspires.ftc.teamcode.utils.Constants;
 import dev.nextftc.robot.Mechanism;
 
 public final class LimelightController implements Mechanism {
+    private static final long APRIL_TAG_MAX_AGE_MS = 100;
     private static Limelight3A limelight;
     private static double lastAimTxDeg = Double.NaN;
     private static long lastTargetSeenNanos;
@@ -60,6 +61,21 @@ public final class LimelightController implements Mechanism {
         LLResult result = limelight.getLatestResult();
         boolean valid = result != null && result.isValid();
         return valid;
+    }
+
+    /** A live fiducial result, independent of the autoaim dropout cache. */
+    public boolean hasFreshAprilTag(int expectedPipeline) {
+        return limelight != null && pipelineNumber == expectedPipeline
+                && isFreshAprilTagResult(limelight.getLatestResult(), expectedPipeline);
+    }
+
+    static boolean isFreshAprilTagResult(LLResult result, int expectedPipeline) {
+        if (result == null || !result.isValid() || result.getPipelineIndex() != expectedPipeline
+                || result.getFiducialResults() == null || result.getFiducialResults().isEmpty()) {
+            return false;
+        }
+        long ageMillis = result.getStaleness();
+        return ageMillis >= 0 && ageMillis <= APRIL_TAG_MAX_AGE_MS;
     }
 
     /** Returns the last valid tx for a short dropout, or NaN when it expires. */

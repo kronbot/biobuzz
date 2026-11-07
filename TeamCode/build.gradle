@@ -49,6 +49,8 @@ android {
 dependencies {
     implementation project(':FtcRobotController')
     testImplementation 'junit:junit:4.13.2'
+    // Real JSON parsing for Limelight results in JVM tests (Android's stub cannot parse).
+    testImplementation 'org.json:json:20240303'
 
     implementation 'dev.nextftc.v2:robot:0.2.1'
 

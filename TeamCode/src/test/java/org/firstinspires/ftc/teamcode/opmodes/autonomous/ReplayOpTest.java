@@ -21,7 +21,7 @@ public class ReplayOpTest {
     private String row(double time, boolean blue, double intake, double transfer, boolean reset) {
         return time + ",0.2,0.2,0.2,0.2,9,9,1.5708,13,0.4,-0.2,0.1,0,0,0,10,0,0,1,0,"
                 + (blue ? 1 : 0) + "," + intake + "," + transfer + ","
-                + (blue ? 3 : 1) + "," + (reset ? 1 : 0);
+                + (blue ? 3 : 1) + "," + (reset ? 1 : 0) + ",0";
     }
 
     private File write(String header, String... rows) throws IOException {
@@ -168,5 +168,65 @@ public class ReplayOpTest {
         assertEquals(-0.2, frame.driveStrafe, 0);
         assertEquals(0.1, frame.driveTurn, 0);
         assertTrue(frame.fieldCentric);
+    }
+
+    @Test public void readsLegacy25ColumnRecordingWithoutWaitMarkers() throws Exception {
+        String first = row(0, true, 0, 0, false);
+        String second = row(0.02, true, -1, 0, true);
+        File file = write(RecordingFormat.LEGACY_HEADER,
+                first.substring(0, first.lastIndexOf(',')),
+                second.substring(0, second.lastIndexOf(',')));
+        List<ReplayOp.RobotFrame> frames = ReplayOp.loadRecording(file, true, false);
+        assertFalse(frames.get(0).waitForAprilTag);
+        assertFalse(frames.get(1).waitForAprilTag);
+        assertTrue(frames.get(1).poseReset);
+        assertEquals(-1, frames.get(1).intakePower, 0);
+    }
+
+    @Test public void loadsMultipleWaitMarkersAlongsideMechanismCommands() throws Exception {
+        String first = row(0, true, 1, 0, false);
+        String last = row(0.04, true, -1, 0, false);
+        File file = write(RecordingFormat.HEADER,
+                first.substring(0, first.length() - 1) + "1",
+                row(0.02, true, 0, 0, false),
+                last.substring(0, last.length() - 1) + "1");
+        List<ReplayOp.RobotFrame> frames = ReplayOp.loadRecording(file, true, false);
+        assertTrue(frames.get(0).waitForAprilTag);
+        assertFalse(frames.get(1).waitForAprilTag);
+        assertTrue(frames.get(2).waitForAprilTag);
+        assertEquals(1, frames.get(0).intakePower, 0);
+        assertEquals(-1, frames.get(2).intakePower, 0);
+    }
+
+    @Test public void rejectsInvalidWaitMarkersBeforeRecordingAndInsideReplay() throws Exception {
+        for (String flag : new String[]{"-1", "2", "0.5", "1.0", "true", "", "NaN"}) {
+            String[] values = row(0.02, true, 0, 0, false).split(",", -1);
+            values[25] = flag;
+            assertThrows(NumberFormatException.class, () -> RecordingFormat.validateRow(values));
+            File file = write(RecordingFormat.HEADER, row(0, true, 0, 0, false),
+                    String.join(",", values), row(0.04, true, 0, 0, false));
+            assertThrows(IOException.class, () -> ReplayOp.loadRecording(file, true, false));
+        }
+    }
+
+    @Test public void requiresRowWidthToMatchHeader() throws Exception {
+        String fullRow = row(0, true, 0, 0, false);
+        String legacyRow = fullRow.substring(0, fullRow.lastIndexOf(','));
+        File newHeader = write(RecordingFormat.HEADER, legacyRow, legacyRow);
+        File oldHeader = write(RecordingFormat.LEGACY_HEADER, fullRow, fullRow);
+        assertThrows(IOException.class, () -> ReplayOp.loadRecording(newHeader, true, false));
+        assertThrows(IOException.class, () -> ReplayOp.loadRecording(oldHeader, true, false));
+    }
+
+    @Test public void waitPipelineUsesRecordedAllianceAndBasketRatherThanAimPipeline() {
+        for (boolean blue : new boolean[]{true, false}) {
+            for (double y : new double[]{71.99, 72, 100}) {
+                String[] values = row(0, blue, 0, 0, false).split(",");
+                values[6] = Double.toString(y);
+                values[23] = "9"; // A stale aiming pipeline must not select the wait target.
+                int expected = blue ? (y < 72 ? 3 : 4) : (y < 72 ? 1 : 2);
+                assertEquals(expected, ReplayOp.waitPipeline(new ReplayOp.RobotFrame(values)));
+            }
+        }
     }
 }

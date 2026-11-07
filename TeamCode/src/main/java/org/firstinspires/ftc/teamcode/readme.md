@@ -28,7 +28,7 @@ Directorul este `Constants.RECORDING_DIRECTORY`, implicit `/sdcard`. Numele sunt
    fișierul anterior al aceleiași alianțe**, inclusiv dacă anulezi înainte de PLAY.
 2. Selectează poziția cu D-pad stânga/dreapta sau jos pentru ultima poziție salvată.
 3. Apasă PLAY și condu. Verifică `Recording: ACTIVE`, calea și numărul de cadre.
-   Eșantionarea țintește 20 ms; schimbările de mecanisme, autoaim, Triangle și L3
+   Eșantionarea țintește 20 ms; schimbările de mecanisme, autoaim, Triangle, L3 și R3
    sunt salvate imediat. Bufferul este golit cel puțin o dată la 0,5 s.
 4. Apasă STOP. Writer-ul este închis și mesajul devine `SAVED` sau `FAILED`.
    Fișierul există deja; nu se folosește `.tmp` și nu se redenumește nimic.
@@ -47,12 +47,45 @@ R1/L1 țin intake-ul înainte/invers, iar eliberarea bumperelor îl oprește.
 Transferul urmează bumperele numai când este montat și activat.
 L3 resetează poziția; evenimentul este înregistrat și reprodus.
 
+### R3: punct de așteptare AprilTag în replay
+
+În recorder, apasă R3 în locul din traseu unde autonomia trebuie să aștepte
+confirmarea coșului. **În recorder conduci în continuare:** R3 salvează imediat
+un marcaj și golește bufferul CSV. `AprilTag wait points` arată numărul marcajelor
+scrise. Menținerea apăsată produce un singur punct; eliberează și apasă din nou
+pentru alt punct. Marchează înaintea comenzilor care trebuie să aștepte coșul.
+
+În replay, fiecare marcaj oprește deplasarea, rotația, autoaim-ul, intake-ul și
+transferul înaintea executării comenzilor cadrului marcat. Odometria și camera
+continuă să fie actualizate. Follower-ul este oprit pe durata pauzei, pentru ca
+nici corecțiile sale să nu comande motoarele; roțile sunt puse în modul BRAKE.
+
+Pipeline-ul este ales după alianța înregistrării și Y-ul înregistrat la marcaj:
+primul coș pentru `Y < 72`, al doilea pentru `Y >= 72`. Alegerea nu depinde de
+activarea L2 sau de pipeline-ul rămas de la ultima utilizare a autoaim-ului.
+Pipeline-urile trebuie configurate în Limelight pentru tag-urile coșurilor potrivite;
+codul nu filtrează suplimentar după ID.
+
+Robotul continuă la primul rezultat valid care conține AprilTag, aparține
+pipeline-ului ales și are vechime între 0 și 100 ms. Un tag deja vizibil este
+suficient; nu trebuie să dispară și să reapară. Cache-ul temporar de autoaim nu
+poate debloca așteptarea. Dacă nu apare o detecție acceptată în **3 secunde**,
+replay-ul continuă oricum, inclusiv comenzile de mecanisme înregistrate după R3.
+Nu este adăugată o comandă nouă de tragere sau o condiție de aliniere.
+
+Timpul traseului rămâne suspendat: un marcaj la secunda 5 urmat de o așteptare
+de 3 secunde reia înregistrarea de la secunda 5, după aproximativ 8 secunde reale.
+Fiecare marcaj are propriul timeout. Marcajele sunt procesate în ordine, inclusiv
+la început/final și când o iterație întârzie. STOP întrerupe așteptarea fără reluare.
+Telemetria afișează pipeline-ul, durata și rezultatul `TAG DETECTED` sau `TIMEOUT`.
+
 ### Adaptări față de FTC_TestRobot
 
 Primele 21 de coloane urmează formatul referinței. `AimingAtBlue` identifică
 alianța recorderului; comenzile A/B sunt păstrate ca date, fără să adauge funcții
-care nu există în TeleOp-ul Biobuzz. Sunt adăugate patru coloane:
-`IntakePower,TransferPower,AimPipeline,PoseReset`.
+care nu există în TeleOp-ul Biobuzz. Sunt adăugate cinci coloane:
+`IntakePower,TransferPower,AimPipeline,PoseReset,WaitForAprilTag`.
+`WaitForAprilTag` este `1` numai în cadrul apăsării R3, altfel `0`.
 
 Replay-ul folosește aceeași interpolare și aceiași coeficienți inițiali P/D din
 referință; aceștia sunt declarați la începutul `ReplayOp.java`. Nu există un
@@ -65,8 +98,11 @@ montat. Când îl montezi, configurează numele `transfer` și activează opțiu
 oprit din configurația codului.
 
 Fișierele vechi de 18 coloane din implementarea anterioară trebuie reînregistrate;
-nu sunt interpretate ca noul format de 25 de coloane. Și traseele de 21 de coloane
+nu sunt interpretate ca noul format de 26 de coloane. Și traseele de 21 de coloane
 din FTC_TestRobot trebuie reînregistrate pentru mecanismele Biobuzz.
+Fișierele Biobuzz existente de 25 de coloane rămân compatibile: replay-ul le
+citește fără puncte de așteptare. Antetul și lățimea rândurilor trebuie să corespundă
+aceluiași format; recorderul scrie întotdeauna 26 de coloane.
 
 Recorderul verifică rândul înainte de scriere; o valoare nevalidă de la senzori
 oprește înregistrarea cu `FAILED`, păstrând cadrele deja scrise. Replay-ul poate
@@ -88,9 +124,17 @@ folosit cache MANUAL. Portul PsiKit rămâne 5801, separat de Limelight Proxy pe
 ./gradlew :TeamCode:testDebugUnitTest :TeamCode:assembleDebug
 ```
 
-Testele verifică citirea fișierelor reale, formatul, ordinea cadrelor, datele
-invalide, alegerea alianței și transferul opțional. Precizia pe teren se verifică
-pe robot; compilarea și testele JVM nu pot confirma odometria sau alunecarea.
+Testele verifică citirea fișierelor reale, ambele formate CSV, ordinea cadrelor,
+datele invalide, alegerea alianței și transferul opțional. Testele cu timp simulat
+verifică suspendarea timpului, detecția imediată/întârziată, timeout-ul de 3 secunde
+și marcajele multiple, inclusiv la început/final și în iterații întârziate.
+Testele Limelight verifică pipeline-ul, prezența fiducialelor și vechimea rezultatelor.
+
+Pe robot, verifică pentru ambele alianțe oprirea tuturor motoarelor la marcaj,
+relansarea când apare tag-ul corect, continuarea după 3 secunde fără tag și STOP
+în timpul așteptării. Verifică și alegerea ambelor coșuri, cu și fără L2 activ în
+înregistrare. Precizia pe teren se verifică pe robot; compilarea și testele JVM
+nu pot confirma odometria sau alunecarea.
 
 ## TeamCode Module
 

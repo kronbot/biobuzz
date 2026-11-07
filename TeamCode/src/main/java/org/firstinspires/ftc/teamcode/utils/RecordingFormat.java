@@ -6,13 +6,15 @@ import java.io.File;
 public final class RecordingFormat {
     public static final String BLUE_FILE_NAME = "robot_recording_blue.csv";
     public static final String RED_FILE_NAME = "robot_recording_red.csv";
-    public static final String HEADER =
+    public static final String LEGACY_HEADER =
             "Time,LR,RR,LF,RF,X,Y,Heading,Voltage,"
                     + "DriveFwd,DriveStr,DriveTurn,DriveMode,"
                     + "APressed,BPressed,VelX,VelY,AngularVelocity,"
                     + "FieldCentric,AimingAtTarget,AimingAtBlue,"
                     + "IntakePower,TransferPower,AimPipeline,PoseReset";
-    public static final int COLUMN_COUNT = 25;
+    public static final String HEADER = LEGACY_HEADER + ",WaitForAprilTag";
+    public static final int LEGACY_COLUMN_COUNT = 25;
+    public static final int COLUMN_COUNT = 26;
     public static final int MODE_MANUAL = 0;
     public static final int MODE_FOLLOWING_PATH = 1;
     public static final int MODE_HOLDING_POSE = 2;
@@ -24,8 +26,13 @@ public final class RecordingFormat {
 
     /** The same row checks are used before writing and while loading. */
     public static void validateRow(String[] values) {
-        if (values.length != COLUMN_COUNT) {
-            throw new NumberFormatException("Expected " + COLUMN_COUNT + " columns, got " + values.length);
+        validateRow(values, COLUMN_COUNT);
+    }
+
+    public static void validateRow(String[] values, int expectedColumns) {
+        if ((expectedColumns != COLUMN_COUNT && expectedColumns != LEGACY_COLUMN_COUNT)
+                || values.length != expectedColumns) {
+            throw new NumberFormatException("Expected " + expectedColumns + " columns, got " + values.length);
         }
         for (int i = 0; i < values.length; i++) {
             if (!Double.isFinite(Double.parseDouble(values[i]))) {
@@ -38,6 +45,10 @@ public final class RecordingFormat {
                 || Math.abs(Double.parseDouble(values[22])) > 1
                 || pipeline < 0 || pipeline > 9) {
             throw new NumberFormatException("Invalid time, voltage, mechanism power, or pipeline");
+        }
+        if (expectedColumns == COLUMN_COUNT
+                && !"0".equals(values[25]) && !"1".equals(values[25])) {
+            throw new NumberFormatException("WaitForAprilTag must be 0 or 1");
         }
     }
 

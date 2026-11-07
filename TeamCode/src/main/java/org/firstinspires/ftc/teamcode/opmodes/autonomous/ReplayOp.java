@@ -122,7 +122,8 @@ public abstract class ReplayOp extends LinearOpMode {
         RobotFrame first = frames.get(0);
         double firstTimestamp = first.timestamp;
         double replayDuration = duration();
-        int frameIndex = 0;
+        ReplayTimeline timeline = new ReplayTimeline(frames);
+        int waitPipeline = -1;
 
         double previousLoopTime = 0;
         double previousHeading = first.heading;
@@ -135,13 +136,10 @@ public abstract class ReplayOp extends LinearOpMode {
 
         replayTimer.reset();
 
-        while (opModeIsActive() && replayTimer.seconds() <= replayDuration) {
-            double now = replayTimer.seconds();
-            double targetTimestamp = firstTimestamp + now;
-
-            while (frameIndex < frames.size() - 1
-                    && frames.get(frameIndex + 1).timestamp <= targetTimestamp) {
-                RobotFrame next = frames.get(++frameIndex);
+        while (opModeIsActive()) {
+            double wallTime = replayTimer.seconds();
+            while (timeline.advance(wallTime)) {
+                RobotFrame next = frames.get(timeline.frameIndex());
                 if (next.poseReset) {
                     robot.setPose(new Pose(next.x, next.y, next.heading));
                     previousLoopTime = 0;
@@ -149,12 +147,55 @@ public abstract class ReplayOp extends LinearOpMode {
                     filteredVelocityErrorY = 0;
                     filteredOmegaError = 0;
                 }
+                if (timeline.isWaiting()) {
+                    robot.drive.stopAiming();
+                    robot.drive.stop();
+                    // breakFollowing() sets FLOAT; enable BRAKE without restarting the follower.
+                    robot.follower.getDrivetrain().startTeleopDrive(true);
+                    robot.intake.turnOff();
+                    robot.transfer.turnOff();
+                    waitPipeline = waitPipeline(next);
+                    robot.vision.selectPipeline(waitPipeline);
+                }
             }
 
+            if (timeline.isWaiting()) {
+                // A full follower update can apply centripetal correction even with zero input.
+                // Only update localization while the drivetrain is stopped.
+                robot.follower.updatePose();
+                boolean tagDetected = robot.vision.hasFreshAprilTag(waitPipeline);
+                wallTime = replayTimer.seconds();
+                boolean resumed = timeline.finishWait(wallTime, tagDetected);
+                telemetry.addData("Replay", resumed ? "RESUMING" : "WAITING FOR APRILTAG");
+                telemetry.addData("Time", "%.2f / %.2f s", timeline.elapsed(wallTime), replayDuration);
+                telemetry.addData("AprilTag wait point", timeline.waitPointCount());
+                telemetry.addData("AprilTag wait pipeline", waitPipeline);
+                telemetry.addData("AprilTag wait time", "%.2f / %.2f s",
+                        timeline.waitElapsed(wallTime), ReplayTimeline.TAG_WAIT_TIMEOUT_SEC);
+                telemetry.addData("AprilTag wait result", timeline.lastWaitResult());
+                telemetry.update();
+                if (!opModeIsActive()) return;
+                if (!resumed) {
+                    idle();
+                    continue;
+                }
+                previousLoopTime = 0;
+                previousHeading = robot.follower.getPose().getHeading();
+                filteredVelocityErrorX = 0;
+                filteredVelocityErrorY = 0;
+                filteredOmegaError = 0;
+                lastVoltageReadTime = -10;
+                robot.follower.startTeleopDrive(true);
+            }
+
+            double now = timeline.elapsed(wallTime);
+            double targetTimestamp = firstTimestamp + now;
+            int frameIndex = timeline.frameIndex();
             RobotFrame a = frames.get(frameIndex);
             RobotFrame b = frameIndex + 1 < frames.size()
                     ? frames.get(frameIndex + 1) : a;
-            double interpolation = b.poseReset ? 0 : interpolationAmount(a, b, targetTimestamp);
+            double interpolation = b.poseReset || b.waitForAprilTag
+                    ? 0 : interpolationAmount(a, b, targetTimestamp);
 
             double targetX = lerp(a.x, b.x, interpolation);
             double targetY = lerp(a.y, b.y, interpolation);
@@ -266,6 +307,8 @@ public abstract class ReplayOp extends LinearOpMode {
             telemetry.addData("Time", "%.2f / %.2f s", now, replayDuration);
             if (recordingWarning != null) telemetry.addData("Recording warning", recordingWarning);
             telemetry.addData("Frame", "%d / %d", frameIndex + 1, frames.size());
+            telemetry.addData("AprilTag wait points passed", timeline.waitPointCount());
+            telemetry.addData("AprilTag wait result", timeline.lastWaitResult());
             telemetry.addData("Recorded mode", modeName(a.driveMode));
             telemetry.addData("Drive frame", fieldCentric ? "Field centric" : "Robot centric");
             telemetry.addData("Target lock", targetLockName(a));
@@ -284,8 +327,17 @@ public abstract class ReplayOp extends LinearOpMode {
 
             previousHeading = currentHeading;
             previousLoopTime = now;
+            // Apply the final frame once, including a final wait marker after a slow loop.
+            if (frameIndex == frames.size() - 1 && now >= replayDuration) break;
             idle();
         }
+    }
+
+    static int waitPipeline(RobotFrame frame) {
+        boolean firstBasket = frame.y < 72.0;
+        return frame.aimingAtBlue
+                ? (firstBasket ? Constants.LIMELIGHT_BLUE_1_PIPELINE : Constants.LIMELIGHT_BLUE_2_PIPELINE)
+                : (firstBasket ? Constants.LIMELIGHT_RED_1_PIPELINE : Constants.LIMELIGHT_RED_2_PIPELINE);
     }
 
     static List<RobotFrame> loadRecording(File file, boolean expectedBlue, boolean transferEnabled)
@@ -307,7 +359,12 @@ public abstract class ReplayOp extends LinearOpMode {
                 throw new IOException("Recording is empty");
             }
 
-            if (!RecordingFormat.HEADER.equals(header)) {
+            int expectedColumns;
+            if (RecordingFormat.HEADER.equals(header)) {
+                expectedColumns = RecordingFormat.COLUMN_COUNT;
+            } else if (RecordingFormat.LEGACY_HEADER.equals(header)) {
+                expectedColumns = RecordingFormat.LEGACY_COLUMN_COUNT;
+            } else {
                 throw new IOException("Unsupported CSV format; record again with Biobuzz Recorder");
             }
 
@@ -324,7 +381,9 @@ public abstract class ReplayOp extends LinearOpMode {
                 }
                 RobotFrame frame;
                 try {
-                    frame = new RobotFrame(line.split(",", -1));
+                    String[] values = line.split(",", -1);
+                    RecordingFormat.validateRow(values, expectedColumns);
+                    frame = new RobotFrame(values);
                 } catch (NumberFormatException e) {
                     invalidFinalRow = new IOException("Invalid CSV line " + lineNumber
                             + ": " + e.getMessage(), e);
@@ -375,7 +434,7 @@ public abstract class ReplayOp extends LinearOpMode {
         if (a.driveMode != b.driveMode
                 || a.fieldCentric != b.fieldCentric
                 || a.aimingAtTarget != b.aimingAtTarget
-                || a.aimingAtBlue != b.aimingAtBlue || b.poseReset) {
+                || a.aimingAtBlue != b.aimingAtBlue || b.poseReset || b.waitForAprilTag) {
             return commandA;
         }
 
@@ -491,9 +550,10 @@ public abstract class ReplayOp extends LinearOpMode {
         final double transferPower;
         final int aimPipeline;
         final boolean poseReset;
+        final boolean waitForAprilTag;
 
         RobotFrame(String[] values) {
-            RecordingFormat.validateRow(values);
+            RecordingFormat.validateRow(values, values.length);
             timestamp = Double.parseDouble(values[0]);
             leftRearPower = Double.parseDouble(values[1]);
             rightRearPower = Double.parseDouble(values[2]);
@@ -519,6 +579,7 @@ public abstract class ReplayOp extends LinearOpMode {
             transferPower = Double.parseDouble(values[22]);
             aimPipeline = Integer.parseInt(values[23]);
             poseReset = parseBoolean(values[24]);
+            waitForAprilTag = values.length == RecordingFormat.COLUMN_COUNT && "1".equals(values[25]);
         }
 
         DriveCommand feedforward() {
