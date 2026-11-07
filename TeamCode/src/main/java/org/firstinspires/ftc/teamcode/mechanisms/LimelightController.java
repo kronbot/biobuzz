@@ -26,6 +26,10 @@ public final class LimelightController implements Mechanism {
         limelight.start();
     }
 
+    public int getSelectedPipeline() {
+        return pipelineNumber;
+    }
+
     public void selectPipeline(int pipeline) {
         if (pipeline == pipelineNumber) {
             return;

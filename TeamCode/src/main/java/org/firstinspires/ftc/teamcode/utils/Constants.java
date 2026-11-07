@@ -42,6 +42,17 @@ public final class Constants {
     public static double INTAKE_POWER = 1;
     public static double TRANSFER_POWER = 1;
 
+    // Starting values from FTC_TestRobot; tune on the new chassis using replay telemetry.
+    public static double REPLAY_TRANSLATION_KP = 0.022;
+    public static double REPLAY_TRANSLATION_KD = 0.013;
+    public static double REPLAY_ROTATION_KP = 0.30;
+    public static double REPLAY_ROTATION_KD = 0.08;
+    public static double REPLAY_VELOCITY_FILTER_ALPHA = 0.25;
+    public static double REPLAY_MAX_TRANSLATION_CORRECTION = 0.35;
+    public static double REPLAY_MAX_ROTATION_CORRECTION = 0.30;
+    public static double REPLAY_MIN_VOLTAGE_SCALE = 0.90;
+    public static double REPLAY_MAX_VOLTAGE_SCALE = 1.10;
+
     public static final int LIMELIGHT_RED_1_PIPELINE = 1;
 
     public static final int LIMELIGHT_RED_2_PIPELINE = 2;

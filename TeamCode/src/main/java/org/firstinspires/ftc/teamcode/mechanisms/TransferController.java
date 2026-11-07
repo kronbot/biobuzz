@@ -47,6 +47,10 @@ public class TransferController implements Mechanism {
         return on;
     }
 
+    public double getPower() {
+        return transferMotor == null ? 0.0 : transferMotor.getPower();
+    }
+
     public void telemetry(Telemetry telemetry) {
         if (transferMotor == null) {
             return;

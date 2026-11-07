@@ -47,6 +47,10 @@ public final class IntakeController implements Mechanism {
         return on;
     }
 
+    public double getPower() {
+        return intakeMotor == null ? 0.0 : intakeMotor.getPower();
+    }
+
     public void telemetry(Telemetry telemetry) {
         if (intakeMotor == null) {
             return;
