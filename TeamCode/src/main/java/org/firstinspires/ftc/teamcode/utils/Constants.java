@@ -39,8 +39,7 @@ public final class Constants {
     public static double CENTER_Y = 72.0;
     public static double CENTER_HEADING_DEG = 90.0;
 
-    public static double INTAKE_POWER = 1;
-    public static double TRANSFER_POWER = 1;
+    public static double INTAKE_POWER = 0.3;
 
     // Starting values from FTC_TestRobot; tune on the new chassis using replay telemetry.
     public static double REPLAY_TRANSLATION_KP = 0.022;

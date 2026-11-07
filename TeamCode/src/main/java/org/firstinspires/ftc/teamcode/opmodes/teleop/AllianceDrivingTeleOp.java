@@ -94,7 +94,7 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         handleDrivingButtons();
         updateAutoAim();
         handlePoseReset();
-        handleIntakeAndTransferButtons();
+        handleIntakeButtons();
 
         updateAimPipeline();
         robot.drive.runManual(controls);
@@ -142,16 +142,18 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         robot.vision.selectPipeline(pipeline);
     }
 
-    private void handleIntakeAndTransferButtons() {
-        if (controls.rightBumper.isPressed()) {
+    private void handleIntakeButtons() {
+        if (robot.intake == null) {
+            return;
+        }
+        if (controls.rightBumper.justPressed()) {
             robot.intake.turnOn(false);
-            robot.transfer.turnOn(false);
-        } else if (controls.leftBumper.isPressed()) {
+        }
+        else if (controls.leftBumper.justPressed()) {
             robot.intake.turnOn(true);
-            robot.transfer.turnOn(true);
-        } else {
+        }
+        else {
             robot.intake.turnOff();
-            robot.transfer.turnOff();
         }
     }
 
@@ -194,8 +196,9 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
         Logger.recordOutput("Drive/Cmd/RightStickX", controls.rightStickX);
         Logger.recordOutput("Vision/Tx", LimelightController.getAimTx());
         Logger.recordOutput("Vision/SeesTag", LimelightController.seesArpilTag());
-        Logger.recordOutput("Intake/On", robot.intake.isOn());
-        Logger.recordOutput("Transfer/On", robot.transfer.isOn());
+        if (robot.intake != null) {
+            Logger.recordOutput("Intake/On", robot.intake.isOn());
+        }
     }
 
     private void addInitTelemetry() {
@@ -218,14 +221,14 @@ public abstract class AllianceDrivingTeleOp extends NextOpMode {
     private void addDriverTelemetry() {
         telemetry.addData("Alliance", allianceName);
         robot.drive.telemetry(telemetry);
-        robot.intake.telemetry(telemetry);
-        robot.transfer.telemetry(telemetry);
+        if (robot.intake != null) {
+            robot.intake.telemetry(telemetry);
+        }
         robot.vision.telemetry(telemetry);
         if (recording != null) {
             recording.telemetry(telemetry);
         }
         telemetry.addLine("Triangle: field centric");
-        telemetry.addLine("Hold R1: intake + transfer forward | Hold L1: reverse | Release: stop");
         telemetry.addLine("L2 > 50%: autoaim | Basket: automatic by Y | L3: reset pose");
         telemetry.addLine("Limelight pipeline follows the aim basket");
     }
